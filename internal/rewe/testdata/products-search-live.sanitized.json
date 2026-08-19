@@ -1,0 +1,16 @@
+{
+  "hits": [
+    {
+      "listingId": "listing-1",
+      "pricing": {
+        "currentRetailPrice": 199,
+        "grammage": "500g"
+      },
+      "title": "Example Product"
+    }
+  ],
+  "pagination": {
+    "currentPage": 0,
+    "pageCount": 1
+  }
+}

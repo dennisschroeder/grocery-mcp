@@ -1,0 +1,13 @@
+{
+  "products": [
+    {
+      "available": true,
+      "id": "product-1",
+      "name": "Example Product",
+      "price": {
+        "cents": 199,
+        "currency": "EUR"
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "stores": [
+    {
+      "city": "Berlin",
+      "distance_meters": 1200,
+      "market_id": "123456",
+      "name": "Example REWE",
+      "postal_code": "10115"
+    }
+  ]
+}

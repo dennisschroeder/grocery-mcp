@@ -1,0 +1,14 @@
+{
+  "orders": [
+    {
+      "id": "order-1",
+      "marketId": "market-1",
+      "pickupAt": "2026-08-20T10:00:00Z",
+      "status": "OPEN",
+      "total": {
+        "cents": 2599,
+        "currency": "EUR"
+      }
+    }
+  ]
+}

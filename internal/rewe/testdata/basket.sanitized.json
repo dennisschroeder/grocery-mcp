@@ -1,0 +1,24 @@
+{
+  "basket": {
+    "id": "basket-1",
+    "lineItems": [
+      {
+        "price": 199,
+        "product": {
+          "id": "product-1",
+          "productName": "Example Product"
+        },
+        "quantity": 1,
+        "totalPrice": 199
+      }
+    ],
+    "serviceSelection": {
+      "wwIdent": "660500"
+    },
+    "summary": {
+      "articleCount": 1,
+      "articlePrice": 199,
+      "totalPrice": 249
+    }
+  }
+}

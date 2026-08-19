@@ -1,0 +1,25 @@
+{
+  "id": "order-1",
+  "items": [
+    {
+      "lineTotal": {
+        "cents": 398,
+        "currency": "EUR"
+      },
+      "name": "Example Product",
+      "productId": "product-1",
+      "quantity": 2,
+      "unitPrice": {
+        "cents": 199,
+        "currency": "EUR"
+      }
+    }
+  ],
+  "marketId": "market-1",
+  "pickupAt": "2026-08-20T10:00:00Z",
+  "status": "READY",
+  "total": {
+    "cents": 2599,
+    "currency": "EUR"
+  }
+}

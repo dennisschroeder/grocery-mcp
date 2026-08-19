@@ -1,0 +1,22 @@
+.DS_Store
+bin/
+coverage.out
+*.log
+
+# Authentication material and captured traffic must never enter Git.
+session.json
+cookies*.json
+cookies*.txt
+*.har
+*.pcap
+fixtures/private/
+
+# The kanban board is local project-management history, not part of the
+# public release.
+board.db
+board.db-journal
+board.db-shm
+board.db-wal
+
+# Transient fan-out state for the card skill's execution graphs.
+.agents/
