@@ -56,15 +56,22 @@ require another REWE login while Chrome still remembers the account.
 
 ## Local installation
 
-Requirements: Google Chrome, Go 1.26, and an existing human-controlled REWE
-login in the same Chrome profile.
+Requirements: Google Chrome, an existing human-controlled REWE login in the
+same Chrome profile, and either Go 1.26 (to build) or a downloaded release
+binary. Either way, a checkout of this repository is required regardless —
+the Chrome extension is loaded from source (`extension/`), never from a
+release artifact.
 
-1. Build the binary:
+1. Get the binary, either by building it:
 
    ```sh
    mkdir -p bin
    go build -o ./bin/grocery-mcp ./cmd/grocery-mcp
    ```
+
+   or by downloading the archive matching your OS/architecture from
+   [Releases](https://github.com/dennisschroeder/grocery-mcp/releases) and
+   extracting `grocery-mcp` into `./bin/`.
 
 2. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
    and select this repository's `extension` directory.
