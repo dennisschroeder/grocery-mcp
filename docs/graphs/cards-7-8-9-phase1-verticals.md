@@ -87,10 +87,12 @@ Closed out 2026-08-19. All three Done.
 - **`stores_search` is a heuristic, not a real endpoint**: REWE has no
   dedicated store-search API; reuses `karrt`'s ZIP-scoped-product-search
   regex hack. Documented in the tool description, not presented as
-  authoritative.
-- **`receipt_get` is summary-only**: explicit product decision (Dennis,
-  2026-08-19) — REWE has no structured per-receipt endpoint, only a PDF
-  this project doesn't parse.
+  authoritative. Superseded on 2026-08-19 by a real, discovered store
+  locator endpoint — see
+  [`docs/known-limitations.md`](../known-limitations.md).
+- **`receipt_get` is summary-only**: explicit product decision (2026-08-19)
+  — REWE has no structured per-receipt endpoint, only a PDF this project
+  doesn't parse.
 
 None of the three verticals' new REWE integrations are live-tested yet —
 that was explicitly out of scope for this wave (unlike `session_identity`/
