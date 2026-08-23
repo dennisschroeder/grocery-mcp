@@ -50,7 +50,7 @@ func (g stubBasketGateway) SelectTimeSlot(ctx context.Context, sc shopping.Shopp
 
 func newBasketTestSession(t *testing.T, gateway shopping.BasketGateway) *mcp.ClientSession {
 	t.Helper()
-	core := shopping.NewCore(stubBasketAuthenticator{}, nil, gateway, nil)
+	core := shopping.NewCore(stubBasketAuthenticator{}, nil, gateway, nil, nil)
 	server := mcp.NewServer(&mcp.Implementation{Name: "grocery-mcp-test", Version: "0.0.0"}, nil)
 	RegisterBasketTools(server, core)
 

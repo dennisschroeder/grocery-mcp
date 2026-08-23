@@ -9,12 +9,20 @@ in Go and draws on ideas from
 Outcome C (browser-executed REWE transport) is accepted — see
 [`ADR-0002`](docs/adr/0002-browser-executed-rewe-transport.md). All Phase 1
 verticals (stores/products, basket/timeslots, orders) are implemented.
-`session_identity`, `orders_list`, `products_search`, `timeslots_list`, and
-`stores_search` are all live-proven against a real, signed-in REWE account;
-restart/reconnect, tab close/reopen, and logged-out fail-closed behavior are
-also live-proven. `basket_get`/`basket_apply` are wired but not yet
+`session_identity`, `orders_list`, `products_search`, `timeslots_list`,
+`stores_search`, `timeslot_select`, and `basket_apply`'s add path are all
+live-proven against a real, signed-in REWE account; restart/reconnect, tab
+close/reopen, and logged-out fail-closed behavior are also live-proven.
+`basket_get` and `basket_apply`'s update/remove paths are wired but not yet
 live-tested. See [`docs/known-limitations.md`](docs/known-limitations.md)
 for the full, current picture.
+
+Phase 2 (checkout) is underway: `order_prepare`/`order_status` and a local,
+human-approved `CheckoutGate` are implemented — see
+[`docs/spikes/checkout.md`](docs/spikes/checkout.md) for the underlying
+reverse-engineering. The actual commit to REWE is deliberately stubbed and
+always fails closed pending its own live-verification pass; no tool on this
+server can place an order.
 
 ## Delivery phases
 
@@ -22,7 +30,8 @@ for the full, current picture.
    product search, basket, timeslots, and read-only order access.
 2. Phase 2: checkout with an out-of-band human approval for every order.
 
-Phase 1 cannot place an order.
+No tool on this server, in either phase, can place an order — Phase 2's
+commit path is a deliberate stub pending its own live-verification pass.
 
 ## Documents
 
@@ -35,6 +44,7 @@ Phase 1 cannot place an order.
 - [`docs/browser-bridge.md`](docs/browser-bridge.md): Chrome setup, human action, and live-proof procedure
 - [`docs/known-limitations.md`](docs/known-limitations.md): current live-testing status, known gaps, reauthentication UX
 - [`docs/spikes/session-refresh.md`](docs/spikes/session-refresh.md): first blocking investigation
+- [`docs/spikes/checkout.md`](docs/spikes/checkout.md): checkout sequence reverse-engineering
 
 ## Scope constraints
 

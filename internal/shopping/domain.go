@@ -207,3 +207,37 @@ type OrderPage struct {
 	HasMore    bool
 	ObservedAt time.Time
 }
+
+type ApprovalID string
+
+type ApprovalStatus string
+
+const (
+	ApprovalPending      ApprovalStatus = "pending"
+	ApprovalApproved     ApprovalStatus = "approved"
+	ApprovalDeclined     ApprovalStatus = "declined"
+	ApprovalExpired      ApprovalStatus = "expired"
+	ApprovalInvalidated  ApprovalStatus = "invalidated"
+	ApprovalCommitted    ApprovalStatus = "committed"
+	ApprovalCommitFailed ApprovalStatus = "commit_failed"
+)
+
+// CheckoutApproval binds one Basket/StoreID/TimeSlotID snapshot to a
+// short-lived, human-approvable order. AGENTS.md: "Every Phase 2 order
+// requires a fresh, out-of-band human approval bound to the exact basket,
+// price, store, and timeslot" and "changing one invalidates dependent
+// state." The full Basket (not just its ID) is the snapshot: the same
+// BasketID can still hold different contents than when the approval was
+// created, and that must invalidate it too.
+type CheckoutApproval struct {
+	ID            ApprovalID
+	Status        ApprovalStatus
+	Basket        Basket
+	StoreID       StoreID
+	TimeSlotID    TimeSlotID
+	ApprovalURL   string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	OrderID       OrderID // set only once Status is ApprovalCommitted
+	FailureReason string  // set only once Status is ApprovalCommitFailed
+}

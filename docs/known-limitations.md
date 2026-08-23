@@ -28,31 +28,60 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
   Reauthentication UX below for that case, which still needs a click.
 - Tab close/reopen: closing the REWE tab and re-clicking the extension
   correctly recreates it and resumes operation.
+- `basket_apply` (add path) — `POST /shop/api/baskets/listings/{listingId}`
+  confirmed live (card #11/#12, 2026-08-21, explicit human sign-off):
+  no `basketId` prefix needed, REWE resolves/creates the basket implicitly.
+  `basket_get` and `basket_apply`'s update/remove paths remain untested.
+- `timeslot_select` — `POST /shop/api/timeslot-reservations` confirmed live
+  (card #11/#12, 2026-08-21, explicit human sign-off) with a request
+  body of `{slotId}` only, no `customerId`/`wwIdent`/`zipCode` — see below.
 
 ## Known limitations
 
-- **`basket_get` / `basket_apply` are entirely un-live-tested.** Both are
-  wired against REWE's real `/shop/api/baskets/*` endpoints (URL prefix and
+- **`basket_get` and `basket_apply`'s update/remove paths are un-live-tested.**
+  Wired against REWE's real `/shop/api/baskets/*` endpoints (URL prefix and
   field shapes confirmed against `Tobi4s1337/karrt`'s source, and
-  `Product.ID` now decodes from the confirmed-real `listingId`), but no live
-  call has actually been made — deliberately deferred, since a real call
-  would add a real item to the signed-in account's real REWE basket. Needs
-  explicit sign-off before testing live.
-- **`timeslot_select` always fails closed.** REWE's `POST
-  /timeslot-reservations` needs a `customerId` with no known source in
-  anything this project's auth flow produces. Even `Tobi4s1337/karrt`'s own
-  reference client ships this same gap unresolved. Returns a typed
-  `ValidationError` rather than guessing at a value that could corrupt a
-  real reservation.
+  `Product.ID` decodes from the confirmed-real `listingId`); only the add
+  path has been exercised live so far (see above).
+- **`timeslot_select` sends no response-shape guarantee.** The request path
+  and body are confirmed live (see above), but the response body wasn't
+  independently observable from that capture (browser performance timing
+  exposes request paths, not POST response bodies) — `SelectTimeSlot`
+  deliberately does not decode REWE's response at all; a successful call is
+  trusted at face value and the context is rebound locally. If REWE's real
+  response ever needs surfacing (e.g. a reservation expiry), that needs its
+  own live-verified decode. The `customerId` this previously failed closed
+  on was resolved by dropping it entirely — `Tobi4s1337/karrt`'s
+  never-resolved guess turned out not to be required at all, per
+  `yannick-cw/korb`'s real, working implementation and card #11's live
+  confirmation (`docs/spikes/checkout.md`).
 - **No digital receipts feature.** `receipts_list`/`receipt_get` were
   removed after live investigation found no REWE UI path for a
   receipts-specific view — REWE's own "Deine Einkäufe" order-history page
   and each order's detail view are the only purchase-history surfaces that
   exist, and both are already covered by `orders_list`/`order_get`.
-- **No checkout, order-placement, cancellation, payment, or approval
-  capability anywhere in Phase 1.** This is by design (Phase 2 scope, cards
-  #11/#12, untouched), not an oversight — confirmed by grepping the
-  registered tool list.
+- **No order-placement, cancellation, or payment capability anywhere.**
+  `order_prepare`/`order_status` (card #12) create and check a human-approved
+  `CheckoutGate` snapshot, but the actual REWE commit call is deliberately
+  stubbed and always fails closed — checkout creation happens server-side
+  on `www.rewe.de` and was unobservable during card #11's investigation
+  (`docs/spikes/checkout.md`), so no unverified request shape was wired to a
+  real, irreversible order-placing endpoint. No MCP tool can reach the
+  commit path at all; only a human's own action on the local approval page
+  can attempt it, and today that attempt always reports `commit_failed`.
+- **The approval page's action token raises the bar but isn't proof of a
+  human.** Card #12's review found `order_prepare`'s `ApprovalURL` alone was
+  a bearer credential sufficient to approve/decline (a `POST` to it needed
+  nothing else) — fixed by requiring a second, per-approval token that only
+  the rendered review page's HTML carries, never any MCP tool output
+  (`internal/checkout/page.go`, `TestOrderPrepareOutputAloneCannotApprove`).
+  This means the value the model actually receives from `order_prepare` is
+  no longer independently sufficient. It is not a complete fix: an agent
+  with unrestricted HTTP tool access could still fetch and parse the review
+  page itself, since nothing here can cryptographically distinguish a real
+  browser click from a sufficiently capable HTTP-scripting client on the
+  same machine. Real proof-of-human-interaction needs the server-initiated
+  MCP URL elicitation path DESIGN.md already flags as an open follow-up.
 - **Linux is untested.** `NativeHostManifestPath` supports it and the code
   has no macOS-specific logic, but every live round this session ran on
   macOS only.

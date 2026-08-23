@@ -191,22 +191,37 @@ func (g Gateway) ListTimeSlots(ctx context.Context, shoppingContext shopping.Sho
 	return shopping.TimeSlotList{TimeSlots: slots, ObservedAt: now.UTC()}, nil
 }
 
-// SelectTimeSlot implements shopping.BasketGateway. REWE's POST
-// /timeslot-reservations requires a customerId. karrt's own reference
-// implementation (Tobi4s1337/karrt, src/api/index.ts, timeslotReserve)
-// sends an empty string with the comment "will be populated from session"
-// and never actually resolves it — even the project this codebase takes
-// its endpoint research from ships that gap. Nothing in ShoppingContext or
-// SessionIdentity carries a REWE customer id, and this project's own
-// AGENTS.md rules out guessing at values that could corrupt a real
-// reservation. Per the frozen contract, this fails closed instead of
-// guessing; resolving it needs a live round-trip REWE actually accepts.
-func (g Gateway) SelectTimeSlot(_ context.Context, _ shopping.ShoppingContext, _ shopping.TimeSlotID) (shopping.ShoppingContext, error) {
-	return shopping.ShoppingContext{}, &shopping.ValidationError{
-		Operation: "select timeslot",
-		Field:     "customer_id",
-		Problem:   shopping.ValidationMissing,
+type timeslotReserveParams struct {
+	SlotID string `json:"slot_id"`
+}
+
+// SelectTimeSlot implements shopping.BasketGateway via POST
+// /shop/api/timeslot-reservations. Previously failed closed on a
+// karrt-derived customerId this project never had a source for. Card
+// #11/#12's live evidence corrected that: yannick-cw/korb's real, working
+// implementation (used to place real orders per its own README) posts only
+// {slotId} — no customerId, wwIdent, or zipCode — and card #11 confirmed
+// this exact endpoint fires live on this project's own www.rewe.de origin
+// when a slot is selected. The response shape wasn't independently
+// observable from that capture (browser performance timing exposes request
+// paths, not POST response bodies), so this deliberately does not decode
+// one: a successful call (no error from Transport.Do) is trusted at face
+// value and the context is rebound locally, the same way store_select needs
+// no REWE call at all. If REWE's real response ever needs surfacing (e.g. a
+// reservation expiry), that needs its own live-verified decode, not a
+// guessed one.
+func (g Gateway) SelectTimeSlot(ctx context.Context, shoppingContext shopping.ShoppingContext, slot shopping.TimeSlotID) (shopping.ShoppingContext, error) {
+	if slot == "" {
+		return shopping.ShoppingContext{}, &shopping.ValidationError{Operation: "select timeslot", Field: "time_slot_id", Problem: shopping.ValidationMissing}
 	}
+	params, err := json.Marshal(timeslotReserveParams{SlotID: string(slot)})
+	if err != nil {
+		return shopping.ShoppingContext{}, err
+	}
+	if _, err := g.Transport.Do(ctx, browserbridge.OperationTimeslotReserve, params); err != nil {
+		return shopping.ShoppingContext{}, classifyMutationBridgeError("select timeslot", err)
+	}
+	return shoppingContext.WithTimeSlot(slot), nil
 }
 
 type basketGetParams struct {

@@ -23,7 +23,7 @@ type AuthStatus struct {
 
 func New(core *shopping.Core) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "grocery-mcp", Version: version}, &mcp.ServerOptions{
-		Instructions: "Phase 1 grocery tools cannot place orders. Authentication material never appears in tool input or output.",
+		Instructions: "No tool on this server places an order. order_prepare only creates a human-reviewable approval; committing it requires an explicit human action on a local approval page, never a tool call. Authentication material never appears in tool input or output.",
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -53,6 +53,7 @@ func New(core *shopping.Core) *mcp.Server {
 	RegisterStoresTools(server, core)
 	RegisterBasketTools(server, core)
 	RegisterOrdersTools(server, core)
+	RegisterCheckoutTools(server, core)
 
 	return server
 }

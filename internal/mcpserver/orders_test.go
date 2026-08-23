@@ -43,7 +43,7 @@ func (g *stubOrdersGateway) GetOrder(context.Context, shopping.ShoppingContext, 
 func connectedOrdersTestServer(t *testing.T, orders *stubOrdersGateway) *mcp.ClientSession {
 	t.Helper()
 	auth := &stubAuthenticator{identity: shopping.SessionIdentity{AccountID: "account-1"}}
-	core := shopping.NewCore(auth, nil, nil, orders)
+	core := shopping.NewCore(auth, nil, nil, orders, nil)
 	server := mcp.NewServer(&mcp.Implementation{Name: "grocery-mcp-test", Version: "0.0.0"}, nil)
 	RegisterOrdersTools(server, core)
 
