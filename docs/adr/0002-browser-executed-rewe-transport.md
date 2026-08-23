@@ -71,9 +71,10 @@ connection — instead of turning it into a multiplexed duplex stream.
   `SameRevision` rotation-proof; a refresh is trusted only if the previous
   binding was touched within a bounded idle window (10 minutes), since there
   is no rotating value left to compare.
-- The 7-state auth state machine (`Unauthenticated`, `Bootstrapping`,
-  `Validating`, `Active`, `Refreshing`, `ReauthRequired`, `Failed`) is
-  unchanged from ADR-0001 in shape; only what "credential" means changed.
+- The 6-state auth state machine (`Unauthenticated`, `Bootstrapping`,
+  `Active`, `Refreshing`, `ReauthRequired`, `Failed`) matches
+  [`DESIGN.md`](../../DESIGN.md)'s transition diagram; only what
+  "credential" means changed from ADR-0001.
 - The live MCP server drives validation automatically: `auto_connect`
   entering `Bootstrapping` spawns one background `Accept` attempt per
   connect, mirroring what the `bridge-smoke` CLI harness already did by

@@ -20,7 +20,7 @@ Closed out 2026-08-18. Accepted — see
                                                                       never completed (route failure,
                                                                       5 attempts, 2 sessions) — recorded,
                                                                       not treated as clean
-8. [human gate] Live proof with Dennis                            -> full success after 3 more real bugs
+8. [human gate] Live proof with the human tester                  -> full success after 3 more real bugs
                                                                       found and fixed during the gate
 9. [agent] Write ADR-0002, update docs, re-scope #4/#6-#10        -> Done
 10. [command] Move #13 to Done (local commit, no remote)          -> Done
@@ -52,7 +52,7 @@ rather than escalated, since each had a clear, verifiable root cause.
    session, fixed, re-verified live.
 4. **Endpoint discovery**: `products_search`'s real endpoint was unknown
    going into the gate (deliberately stubbed per the frozen contract).
-   Found via Dennis's Chrome DevTools capture, cross-checked against
+   Found via the human tester's Chrome DevTools capture, cross-checked against
    `Tobi4s1337/karrt`'s independent reverse-engineering of the same API.
    `basket_get`'s endpoint was also researched this way but turned out to
    need a `basketId` dependency out of scope for a spike — deferred to card

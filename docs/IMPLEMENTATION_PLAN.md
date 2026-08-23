@@ -49,7 +49,7 @@ checkout, payment, or approval operation is registered or otherwise reachable.
 8. Verify installation, restart behavior, redaction, concurrent calls, and upstream failures. **Done: card #10.**
 9. Reverse-engineer checkout and payment/challenge behavior separately. **Done: card #11 — see [`docs/spikes/checkout.md`](spikes/checkout.md).** Conditional go recorded for a `MARKET_PAYMENT`-only Phase 2: sequence, order identity, `customerId`, and two mutating endpoints (`timeslot-reservations`, `baskets/listings/{id}`) are confirmed live on this project's own `www.rewe.de/shop/api` origin. `checkouts` creation is confirmed server-side and unobservable by any technique available in this environment (accepted limitation). `payments`/`confirmations`/`orders` writes remain unexercised on this origin — well-evidenced from a real, working reference implementation against `mobile-clients-api.rewe.de` — and each needs its own deliberate go-ahead when card #12 implements them.
 10. Implement Phase 2 only if checkout can remain out-of-band, human-approved,
-    fail-closed, and reconcilable. **Underway: card #12.** `order_prepare`/
+    fail-closed, and reconcilable. **Done: card #12.** `order_prepare`/
     `order_status` and `CheckoutGate` (`internal/checkout`) are implemented —
     a local, loopback-only HTTP page is the only path a human can use to
     approve or decline an order, and no MCP tool can reach the commit call.

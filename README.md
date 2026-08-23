@@ -4,34 +4,78 @@ Local MCP server for grocery shopping. The REWE-first implementation is built
 in Go and draws on ideas from
 [Tobi4s1337/karrt](https://github.com/Tobi4s1337/karrt).
 
-## Status
+## What it does
 
-Outcome C (browser-executed REWE transport) is accepted — see
-[`ADR-0002`](docs/adr/0002-browser-executed-rewe-transport.md). All Phase 1
-verticals (stores/products, basket/timeslots, orders) are implemented.
-`session_identity`, `orders_list`, `products_search`, `timeslots_list`,
-`stores_search`, `timeslot_select`, and `basket_apply`'s add path are all
-live-proven against a real, signed-in REWE account; restart/reconnect, tab
-close/reopen, and logged-out fail-closed behavior are also live-proven.
-`basket_get` and `basket_apply`'s update/remove paths are wired but not yet
-live-tested. See [`docs/known-limitations.md`](docs/known-limitations.md)
-for the full, current picture.
+- Read/write access to REWE Pickup: store search, product search, basket,
+  timeslots, and order history.
+- `order_prepare`/`order_status` create a human-approved checkout snapshot on
+  a local page. The actual REWE commit is deliberately stubbed and always
+  fails closed — no tool on this server can place an order. See
+  [`DESIGN.md`](DESIGN.md#checkout).
+- REWE requests execute inside your own signed-in Chrome tab through a
+  narrowly scoped extension, never as direct API calls with stored
+  credentials — see
+  [`ADR-0002`](docs/adr/0002-browser-executed-rewe-transport.md).
 
-Phase 2 (checkout) is underway: `order_prepare`/`order_status` and a local,
-human-approved `CheckoutGate` are implemented — see
-[`docs/spikes/checkout.md`](docs/spikes/checkout.md) for the underlying
-reverse-engineering. The actual commit to REWE is deliberately stubbed and
-always fails closed pending its own live-verification pass; no tool on this
-server can place an order.
+See [`docs/known-limitations.md`](docs/known-limitations.md) for exactly
+which operations are live-tested today.
 
-## Delivery phases
+## Install
 
-1. Phase 1: browser-assisted authentication, session maintenance, stores,
-   product search, basket, timeslots, and read-only order access.
-2. Phase 2: checkout with an out-of-band human approval for every order.
+### Homebrew (macOS/Linux)
 
-No tool on this server, in either phase, can place an order — Phase 2's
-commit path is a deliberate stub pending its own live-verification pass.
+```sh
+brew tap dennisschroeder/grocery-mcp
+brew install grocery-mcp
+```
+
+### Build from source
+
+Requires Go 1.26.
+
+```sh
+git clone https://github.com/dennisschroeder/grocery-mcp.git
+cd grocery-mcp
+go build -o ./bin/grocery-mcp ./cmd/grocery-mcp
+```
+
+Or download a prebuilt binary for your OS/architecture from
+[Releases](https://github.com/dennisschroeder/grocery-mcp/releases).
+
+### Chrome extension (one-time setup)
+
+1. Open `chrome://extensions`, enable Developer mode, choose **Load
+   unpacked**, and select the extension directory: `$(brew
+   --prefix)/share/grocery-mcp/extension` for a Homebrew install, or this
+   checkout's `extension/` directory for a source build.
+2. Copy the 32-character extension ID Chrome assigns it.
+3. Register the native host for that exact ID:
+
+   ```sh
+   grocery-mcp install-native-host --extension-id EXTENSION_ID
+   ```
+
+Full detail on the human-in-the-loop flow, plus a live acceptance gate
+(`grocery-mcp bridge-smoke`) that proves the bridge end to end, is in
+[`docs/browser-bridge.md`](docs/browser-bridge.md).
+
+### Connect an MCP client
+
+Point your MCP client at `grocery-mcp serve` (no arguments also serves).
+Example for a client using a `command`/`args` config shape:
+
+```json
+{
+  "mcpServers": {
+    "grocery-mcp": {
+      "command": "grocery-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Then call `auth_connect` and click the extension when prompted.
 
 ## Documents
 
