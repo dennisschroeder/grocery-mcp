@@ -35,7 +35,7 @@ func (f *fakeBasketGateway) SelectTimeSlot(ctx context.Context, sc ShoppingConte
 }
 
 func TestCoreGetBasketFailsClosedWithoutIdentity(t *testing.T) {
-	core := NewCore(&stubAuthenticator{}, nil, &fakeBasketGateway{}, nil)
+	core := NewCore(&stubAuthenticator{}, nil, &fakeBasketGateway{}, nil, nil)
 	_, err := core.GetBasket(t.Context())
 	var authErr *AuthError
 	if !errors.As(err, &authErr) {
@@ -48,7 +48,7 @@ func TestCoreGetBasketReturnsGatewayResult(t *testing.T) {
 	gateway := &fakeBasketGateway{
 		getBasket: func(context.Context, ShoppingContext) (Basket, error) { return want, nil },
 	}
-	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil)
+	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil, nil)
 	got, err := core.GetBasket(t.Context())
 	if err != nil || got.ID != want.ID {
 		t.Fatalf("GetBasket() = %#v, %v", got, err)
@@ -67,7 +67,7 @@ func TestCoreGetBasketRetriesOnceAfterAuthErrorThenRefresh(t *testing.T) {
 		},
 	}
 	auth := &stubAuthenticator{hasIdentity: true}
-	core := NewCore(auth, nil, gateway, nil)
+	core := NewCore(auth, nil, gateway, nil, nil)
 	got, err := core.GetBasket(t.Context())
 	if err != nil || got.ID != "basket-1" {
 		t.Fatalf("GetBasket() = %#v, %v", got, err)
@@ -86,7 +86,7 @@ func TestCoreApplyBasketNeverRetriesOnAuthError(t *testing.T) {
 		},
 	}
 	auth := &stubAuthenticator{hasIdentity: true}
-	core := NewCore(auth, nil, gateway, nil)
+	core := NewCore(auth, nil, gateway, nil, nil)
 	_, err := core.ApplyBasket(t.Context(), BasketMutation{Changes: []BasketChange{{ProductID: "p1", Quantity: 1}}})
 	var authErr *AuthError
 	if !errors.As(err, &authErr) {
@@ -110,7 +110,7 @@ func TestCoreApplyBasketReturnsPartialOutcomes(t *testing.T) {
 	gateway := &fakeBasketGateway{
 		applyBasket: func(context.Context, ShoppingContext, BasketMutation) (BasketMutationResult, error) { return want, nil },
 	}
-	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil)
+	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil, nil)
 	got, err := core.ApplyBasket(t.Context(), BasketMutation{Changes: []BasketChange{{ProductID: "p1", Quantity: 2}, {ProductID: "p2", Quantity: 1}}})
 	if err != nil {
 		t.Fatalf("ApplyBasket() error = %v", err)
@@ -127,7 +127,7 @@ func TestCoreApplyBasketRebindsContextToDiscoveredBasketID(t *testing.T) {
 		},
 	}
 	auth := &stubAuthenticator{hasIdentity: true, identity: SessionIdentity{AccountID: "account-1"}}
-	core := NewCore(auth, nil, gateway, nil)
+	core := NewCore(auth, nil, gateway, nil, nil)
 	if _, err := core.ApplyBasket(t.Context(), BasketMutation{Changes: []BasketChange{{ProductID: "p1", Quantity: 1}}}); err != nil {
 		t.Fatalf("ApplyBasket() error = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestCoreApplyBasketDoesNotClearAnExistingBasketIDWhenResultHasNone(t *testi
 		},
 	}
 	auth := &stubAuthenticator{hasIdentity: true, identity: SessionIdentity{AccountID: "account-1"}}
-	core := NewCore(auth, nil, gateway, nil)
+	core := NewCore(auth, nil, gateway, nil, nil)
 	core.rebindContext(ShoppingContext{AccountID: "account-1", BasketID: "basket-existing"})
 	if _, err := core.ApplyBasket(t.Context(), BasketMutation{Changes: []BasketChange{{ProductID: "p1", Quantity: 0}}}); err != nil {
 		t.Fatalf("ApplyBasket() error = %v", err)
@@ -169,7 +169,7 @@ func TestCoreListTimeSlotsUsesReadWithRefresh(t *testing.T) {
 		},
 	}
 	auth := &stubAuthenticator{hasIdentity: true}
-	core := NewCore(auth, nil, gateway, nil)
+	core := NewCore(auth, nil, gateway, nil, nil)
 	got, err := core.ListTimeSlots(t.Context())
 	if err != nil || len(got.TimeSlots) != 1 {
 		t.Fatalf("ListTimeSlots() = %#v, %v", got, err)
@@ -184,7 +184,7 @@ func TestCoreSelectTimeSlotRebindsContextOnSuccess(t *testing.T) {
 	gateway := &fakeBasketGateway{
 		selectTimeSlot: func(context.Context, ShoppingContext, TimeSlotID) (ShoppingContext, error) { return next, nil },
 	}
-	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil)
+	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil, nil)
 	got, err := core.SelectTimeSlot(t.Context(), "slot-1")
 	if err != nil || got != next {
 		t.Fatalf("SelectTimeSlot() = %#v, %v", got, err)
@@ -205,7 +205,7 @@ func TestCoreSelectTimeSlotDoesNotRebindOnError(t *testing.T) {
 		},
 	}
 	auth := &stubAuthenticator{hasIdentity: true, identity: SessionIdentity{AccountID: "account-1"}}
-	core := NewCore(auth, nil, gateway, nil)
+	core := NewCore(auth, nil, gateway, nil, nil)
 	_, err := core.SelectTimeSlot(t.Context(), "slot-1")
 	var validationErr *ValidationError
 	if !errors.As(err, &validationErr) {

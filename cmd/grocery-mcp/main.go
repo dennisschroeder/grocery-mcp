@@ -16,6 +16,7 @@ import (
 
 	"github.com/dennisschroeder/grocery-mcp/internal/auth"
 	"github.com/dennisschroeder/grocery-mcp/internal/browserbridge"
+	"github.com/dennisschroeder/grocery-mcp/internal/checkout"
 	"github.com/dennisschroeder/grocery-mcp/internal/mcpserver"
 	"github.com/dennisschroeder/grocery-mcp/internal/rewe"
 	"github.com/dennisschroeder/grocery-mcp/internal/shopping"
@@ -72,7 +73,9 @@ func serveMCP() error {
 	}()
 
 	gateway := rewe.Gateway{Transport: bridge}
-	err = mcpserver.New(shopping.NewCore(authenticator, gateway, gateway, gateway)).Run(ctx, &mcp.StdioTransport{})
+	checkoutGate := checkout.NewGate()
+	defer checkoutGate.Close()
+	err = mcpserver.New(shopping.NewCore(authenticator, gateway, gateway, gateway, checkoutGate)).Run(ctx, &mcp.StdioTransport{})
 	select {
 	case bridgeErr := <-bridgeErrors:
 		return fmt.Errorf("browser bridge stopped: %w", bridgeErr)

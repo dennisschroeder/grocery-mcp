@@ -29,7 +29,7 @@ func (unreachableStoresGateway) SearchProducts(context.Context, shopping.Shoppin
 
 func newStoresTestSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
-	core := shopping.NewCore(auth.NewService(nil), unreachableStoresGateway{}, nil, nil)
+	core := shopping.NewCore(auth.NewService(nil), unreachableStoresGateway{}, nil, nil, nil)
 	server := mcp.NewServer(&mcp.Implementation{Name: "grocery-mcp-test", Version: "0.0.0"}, nil)
 	RegisterStoresTools(server, core)
 

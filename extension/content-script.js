@@ -243,30 +243,29 @@ function handleTimeslotsList(params) {
   return fetchWithStandardMapping("/shop/api/timeslots/pickup/overview", headers);
 }
 
-// Go never calls timeslot_reserve yet (SelectTimeSlot is stubbed pending a
-// resolved customerId source — see gateway_basket.go), but the handler is
-// wired for real per the contract's endpoint research, so a future card can
-// flip the Go-side stub without touching this file again.
+// Request body corrected per card #11/#12's live evidence: karrt's guessed
+// shape ({slotId, customerId, wwIdent, zipCode}, customerId always sent
+// empty and never resolved) is not what a real, working REWE client sends.
+// yannick-cw/korb's actual implementation — real, working, used to place
+// real orders — posts only {slotId}; no customerId, wwIdent, or zipCode.
+// docs/spikes/checkout.md confirmed POST /shop/api/timeslot-reservations
+// itself fires live on this exact origin when a slot is selected. The
+// request body wasn't independently observable from that capture (browser
+// performance timing doesn't expose POST bodies), so this mirrors korb's
+// proven-real shape rather than the never-resolved karrt guess it replaces.
 function validatedReserveParams(params) {
   const slotId = params?.slot_id;
-  const customerId = params?.customer_id;
-  const wwIdent = params?.ww_ident;
-  const zipCode = params?.zip_code;
   if (typeof slotId !== "string" || slotId.trim() === "" || slotId.length > 200) return null;
-  if (typeof customerId !== "string" || customerId.length > 200) return null;
-  if (typeof wwIdent !== "string" || wwIdent.trim() === "" || wwIdent.length > 50) return null;
-  if (typeof zipCode !== "string" || !/^[0-9]{4,10}$/.test(zipCode)) return null;
-  return { slotId, customerId, wwIdent, zipCode };
+  return { slotId };
 }
 
 function handleTimeslotReserve(params) {
   const validated = validatedReserveParams(params);
   if (!validated) return Promise.resolve({ ok: false, code: "invalid_params" });
-  const { slotId, customerId, wwIdent, zipCode } = validated;
   return fetchJSONMutation(
     "/shop/api/timeslot-reservations",
     "POST",
-    { slotId, customerId, wwIdent, zipCode },
+    { slotId: validated.slotId },
     {},
   );
 }

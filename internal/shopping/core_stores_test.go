@@ -39,7 +39,7 @@ func TestCoreStoresSearchBindsContextAndCallsGateway(t *testing.T) {
 			return StorePage{Stores: []Store{{ID: "123456"}}}, nil
 		},
 	}
-	core := NewCore(auth, gateway, nil, nil)
+	core := NewCore(auth, gateway, nil, nil, nil)
 	page, err := core.StoresSearch(t.Context(), StoreSearch{PostalCode: "10115"})
 	if err != nil {
 		t.Fatalf("StoresSearch() error = %v", err)
@@ -54,7 +54,7 @@ func TestCoreStoresSearchBindsContextAndCallsGateway(t *testing.T) {
 
 func TestCoreStoresSearchFailsClosedWhenUnauthenticated(t *testing.T) {
 	auth := &stubAuthenticator{}
-	core := NewCore(auth, stubStoresGateway{}, nil, nil)
+	core := NewCore(auth, stubStoresGateway{}, nil, nil, nil)
 	_, err := core.StoresSearch(t.Context(), StoreSearch{PostalCode: "10115"})
 	var target *AuthError
 	if !errors.As(err, &target) {
@@ -74,7 +74,7 @@ func TestCoreStoresSearchRetriesOnceAfterSuccessfulRefresh(t *testing.T) {
 			return StorePage{Stores: []Store{{ID: "123456"}}}, nil
 		},
 	}
-	core := NewCore(auth, gateway, nil, nil)
+	core := NewCore(auth, gateway, nil, nil, nil)
 	page, err := core.StoresSearch(t.Context(), StoreSearch{PostalCode: "10115"})
 	if err != nil {
 		t.Fatalf("StoresSearch() error = %v", err)
@@ -94,7 +94,7 @@ func TestCoreProductsSearchBindsContextAndCallsGateway(t *testing.T) {
 			return ProductPage{Products: []Product{{ID: "product-1"}}}, nil
 		},
 	}
-	core := NewCore(auth, gateway, nil, nil)
+	core := NewCore(auth, gateway, nil, nil, nil)
 	page, err := core.ProductsSearch(t.Context(), ProductSearch{Query: "milch"})
 	if err != nil {
 		t.Fatalf("ProductsSearch() error = %v", err)
@@ -106,7 +106,7 @@ func TestCoreProductsSearchBindsContextAndCallsGateway(t *testing.T) {
 
 func TestCoreProductsSearchFailsClosedWhenUnauthenticated(t *testing.T) {
 	auth := &stubAuthenticator{}
-	core := NewCore(auth, stubStoresGateway{}, nil, nil)
+	core := NewCore(auth, stubStoresGateway{}, nil, nil, nil)
 	_, err := core.ProductsSearch(t.Context(), ProductSearch{Query: "milch"})
 	var target *AuthError
 	if !errors.As(err, &target) {
@@ -121,7 +121,7 @@ func TestCoreSelectStoreRebindsContextOnSuccess(t *testing.T) {
 			return current.WithStore(id), nil
 		},
 	}
-	core := NewCore(auth, gateway, nil, nil)
+	core := NewCore(auth, gateway, nil, nil, nil)
 	next, err := core.SelectStore(t.Context(), StoreID("123456"), "10115")
 	if err != nil {
 		t.Fatalf("SelectStore() error = %v", err)
@@ -141,7 +141,7 @@ func TestCoreSelectStoreDoesNotRebindOnFailure(t *testing.T) {
 			return ShoppingContext{}, &ValidationError{Operation: "stores.select", Field: "store_id", Problem: ValidationInvalid}
 		},
 	}
-	core := NewCore(auth, gateway, nil, nil)
+	core := NewCore(auth, gateway, nil, nil, nil)
 	_, err := core.SelectStore(t.Context(), StoreID("bad"), "10115")
 	var target *ValidationError
 	if !errors.As(err, &target) {
@@ -161,7 +161,7 @@ func TestCoreSelectStoreDoesNotRetryAMutation(t *testing.T) {
 			return ShoppingContext{}, &AuthError{Operation: "stores.select"}
 		},
 	}
-	core := NewCore(auth, gateway, nil, nil)
+	core := NewCore(auth, gateway, nil, nil, nil)
 	_, err := core.SelectStore(t.Context(), StoreID("123456"), "10115")
 	var target *AuthError
 	if !errors.As(err, &target) {
@@ -177,7 +177,7 @@ func TestCoreSelectStoreDoesNotRetryAMutation(t *testing.T) {
 
 func TestCoreSelectStoreFailsClosedWhenUnauthenticated(t *testing.T) {
 	auth := &stubAuthenticator{}
-	core := NewCore(auth, stubStoresGateway{}, nil, nil)
+	core := NewCore(auth, stubStoresGateway{}, nil, nil, nil)
 	_, err := core.SelectStore(t.Context(), StoreID("123456"), "10115")
 	var target *AuthError
 	if !errors.As(err, &target) {

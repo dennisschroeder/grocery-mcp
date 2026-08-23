@@ -42,3 +42,16 @@ type OrdersGateway interface {
 	ListOrders(context.Context, ShoppingContext, PageRequest) (OrderPage, error)
 	GetOrder(context.Context, ShoppingContext, OrderID) (Order, error)
 }
+
+// CheckoutGate is deliberately not part of ReweGateway — DESIGN.md draws it
+// as ShoppingCore's other direct dependency, sibling to ReweGateway, not a
+// REWE-facing vertical: it owns human approval, commit, and reconciliation,
+// never raw REWE transport/decoding. Prepare binds one Basket/StoreID/
+// TimeSlotID snapshot to a short-lived approval and returns it immediately;
+// it must never block on the human's decision. Status is the only way to
+// observe an approval's outcome — including whether Prepare's own snapshot
+// has since been invalidated by a relevant state change.
+type CheckoutGate interface {
+	Prepare(ctx context.Context, current Basket, storeID StoreID, timeSlotID TimeSlotID) (CheckoutApproval, error)
+	Status(ctx context.Context, id ApprovalID, current Basket) (CheckoutApproval, error)
+}

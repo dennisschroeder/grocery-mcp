@@ -13,7 +13,7 @@ import (
 func TestAuthToolsAreReachableThroughMCP(t *testing.T) {
 	ctx := t.Context()
 	service := auth.NewService(nil)
-	server := New(shopping.NewCore(service, nil, nil, nil))
+	server := New(shopping.NewCore(service, nil, nil, nil, nil))
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -42,6 +42,7 @@ func TestAuthToolsAreReachableThroughMCP(t *testing.T) {
 		"auth_connect", "auth_disconnect", "auth_status",
 		"basket_apply", "basket_get",
 		"order_get", "orders_list",
+		"order_prepare", "order_status",
 		"products_search",
 		"store_select", "stores_search",
 		"timeslot_select", "timeslots_list",
@@ -69,7 +70,7 @@ func TestAuthToolsAreReachableThroughMCP(t *testing.T) {
 }
 
 func TestAuthToolAnnotationsAreExplicit(t *testing.T) {
-	server := New(shopping.NewCore(auth.NewService(nil), nil, nil, nil))
+	server := New(shopping.NewCore(auth.NewService(nil), nil, nil, nil, nil))
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
 	if err != nil {
@@ -89,9 +90,11 @@ func TestAuthToolAnnotationsAreExplicit(t *testing.T) {
 	// basket_apply and timeslot_select are real mutations without a proven
 	// idempotency guarantee (AGENTS.md: mutations need proven idempotency or
 	// reconciliation before any retry) — mutationAnnotations marks them
-	// non-idempotent on purpose. Every other tool, including the other
-	// selection/mutation-shaped ones, is expected idempotent.
-	notIdempotent := map[string]bool{"basket_apply": true, "timeslot_select": true}
+	// non-idempotent on purpose. order_prepare joins them: calling it again
+	// supersedes any prior unresolved approval, not a no-op. Every other
+	// tool, including the other selection/mutation-shaped ones, is expected
+	// idempotent.
+	notIdempotent := map[string]bool{"basket_apply": true, "timeslot_select": true, "order_prepare": true}
 	for _, tool := range listed.Tools {
 		if tool.Annotations == nil || tool.Annotations.DestructiveHint == nil || tool.Annotations.OpenWorldHint == nil {
 			t.Fatalf("%s has incomplete annotations", tool.Name)

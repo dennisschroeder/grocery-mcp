@@ -518,14 +518,41 @@ func TestGatewayListTimeSlotsFailsClosedWithNoStoreSelected(t *testing.T) {
 
 // --- SelectTimeSlot ---
 
-func TestGatewaySelectTimeSlotIsStubbedAndNeverCallsTransport(t *testing.T) {
+func TestGatewaySelectTimeSlotFailsClosedOnEmptySlot(t *testing.T) {
 	transport := &countingTransport{}
-	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{}, "slot-1")
+	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{}, "")
 	var validationErr *shopping.ValidationError
-	if !errors.As(err, &validationErr) || validationErr.Field != "customer_id" {
+	if !errors.As(err, &validationErr) || validationErr.Field != "time_slot_id" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if transport.calls != 0 {
-		t.Fatalf("transport called %d times, want 0 (SelectTimeSlot must not guess at customer_id)", transport.calls)
+		t.Fatalf("transport called %d times, want 0", transport.calls)
+	}
+}
+
+func TestGatewaySelectTimeSlotSendsSlotIDOnlyAndRebindsContext(t *testing.T) {
+	transport := &capturingTransport{result: json.RawMessage(`{}`)}
+	shoppingContext := shopping.ShoppingContext{StoreID: "store-1", BasketID: "basket-1"}
+	next, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shoppingContext, "slot-1")
+	if err != nil {
+		t.Fatalf("SelectTimeSlot() error = %v", err)
+	}
+	if transport.gotOp != browserbridge.OperationTimeslotReserve {
+		t.Fatalf("operation = %q, want %q", transport.gotOp, browserbridge.OperationTimeslotReserve)
+	}
+	if string(transport.gotParams) != `{"slot_id":"slot-1"}` {
+		t.Fatalf("params = %s, want only slot_id (see gateway_basket.go: korb's real client sends no customerId)", transport.gotParams)
+	}
+	if next.TimeSlotID != "slot-1" || next.StoreID != "store-1" || next.BasketID != "basket-1" {
+		t.Fatalf("SelectTimeSlot() = %#v, want time slot bound and rest of context preserved", next)
+	}
+}
+
+func TestGatewaySelectTimeSlotClassifiesMutationBridgeError(t *testing.T) {
+	transport := &capturingTransport{err: codedStubError{code: "auth_invalid"}}
+	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{}, "slot-1")
+	var authErr *shopping.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

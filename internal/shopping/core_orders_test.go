@@ -57,7 +57,7 @@ func TestCoreListOrdersBindsContextAndDelegates(t *testing.T) {
 	auth := &stubAuthenticator{authenticated: true, identity: shopping.SessionIdentity{AccountID: "account-1", ShopSessionID: "session-1"}}
 	want := shopping.OrderPage{Orders: []shopping.OrderSummary{{ID: "order-1"}}, ObservedAt: time.Now()}
 	orders := &stubOrdersGateway{orderPage: want}
-	core := shopping.NewCore(auth, nil, nil, orders)
+	core := shopping.NewCore(auth, nil, nil, orders, nil)
 
 	got, err := core.ListOrders(t.Context(), shopping.PageRequest{Limit: 10})
 	if err != nil {
@@ -77,7 +77,7 @@ func TestCoreListOrdersBindsContextAndDelegates(t *testing.T) {
 func TestCoreListOrdersFailsClosedWithoutIdentity(t *testing.T) {
 	auth := &stubAuthenticator{authenticated: false}
 	orders := &stubOrdersGateway{}
-	core := shopping.NewCore(auth, nil, nil, orders)
+	core := shopping.NewCore(auth, nil, nil, orders, nil)
 
 	_, err := core.ListOrders(t.Context(), shopping.PageRequest{})
 	var authErr *shopping.AuthError
@@ -92,7 +92,7 @@ func TestCoreListOrdersFailsClosedWithoutIdentity(t *testing.T) {
 func TestCoreGetOrderDelegates(t *testing.T) {
 	auth := &stubAuthenticator{authenticated: true, identity: shopping.SessionIdentity{AccountID: "account-1"}}
 	orders := &stubOrdersGateway{order: shopping.Order{OrderSummary: shopping.OrderSummary{ID: "order-9"}}}
-	core := shopping.NewCore(auth, nil, nil, orders)
+	core := shopping.NewCore(auth, nil, nil, orders, nil)
 
 	got, err := core.GetOrder(t.Context(), "order-9")
 	if err != nil {
@@ -109,7 +109,7 @@ func TestCoreGetOrderDelegates(t *testing.T) {
 func TestCoreListOrdersRetriesOnceAfterAuthErrorAndRefresh(t *testing.T) {
 	auth := &stubAuthenticator{authenticated: true, identity: shopping.SessionIdentity{AccountID: "account-1"}}
 	orders := &stubOrdersGateway{listOrdersErr: &shopping.AuthError{Operation: "orders.list"}}
-	core := shopping.NewCore(auth, nil, nil, orders)
+	core := shopping.NewCore(auth, nil, nil, orders, nil)
 
 	_, err := core.ListOrders(t.Context(), shopping.PageRequest{})
 	var authErr *shopping.AuthError

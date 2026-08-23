@@ -122,12 +122,8 @@ func RegisterBasketTools(server *mcp.Server, core *shopping.Core) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "timeslot_select",
-		// Not yet functional: REWE's reservation call needs a customerId
-		// this project has no verified source for (see gateway_basket.go's
-		// SelectTimeSlot). Documented here rather than left silent, so a
-		// caller sees why every call currently fails.
-		Description: "Reserve a pickup timeslot for the current basket. Currently always fails with a validation error: REWE's timeslot-reservations endpoint requires a customer id this project cannot yet source without live REWE testing.",
+		Name:        "timeslot_select",
+		Description: "Reserve a pickup timeslot for the current basket.",
 		Annotations: mutationAnnotations(false, false, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in TimeSlotSelectInput) (*mcp.CallToolResult, TimeSlotSelectOutput, error) {
 		next, err := core.SelectTimeSlot(ctx, shopping.TimeSlotID(in.TimeSlotID))

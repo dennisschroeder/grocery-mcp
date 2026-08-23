@@ -93,15 +93,19 @@ The interface is task-oriented and typed:
 - `basket_get`, `basket_apply`
 - `timeslots_list`, `timeslot_select`
 - `orders_list`, `order_get`
-- Phase 2: `order_prepare`, `order_status`
+- `order_prepare`, `order_status` — card #12; no tool on this server can
+  commit an order (see Checkout below)
 
 `receipts_list`/`receipt_get` were removed after live investigation found no
 REWE UI path for a receipts-specific feature — see
 [`docs/known-limitations.md`](docs/known-limitations.md).
 
-Phase 1 registers no order-placement, order-cancellation, checkout, payment, or
-approval tools. An upstream endpoint is not reachable merely because it exists;
-only explicitly registered Phase 1 operations can cross `ShoppingCore`.
+No tool registered on this server, in Phase 1 or Phase 2, can place, cancel,
+confirm, or pay for an order. An upstream endpoint is not reachable merely
+because it exists; only explicitly registered operations can cross
+`ShoppingCore`, and `order_prepare`/`order_status` are reads/approval-creation
+only — the commit path is reachable exclusively through a human's own action
+on the local approval page, never through any MCP tool call.
 
 Raw REWE responses remain behind `ReweGateway`. Tool annotations describe
 read-only, destructive, idempotent, and open-world behavior, but the server
@@ -109,15 +113,42 @@ enforces all safety rules itself.
 
 ## Checkout
 
-`order_prepare` reloads the authoritative basket, prices, fees, store, and
-timeslot, then creates a short-lived approval ID. The human reviews that state
-on a local approval page presented through URL elicitation, or through a local
-fallback when the MCP client lacks that capability.
+`order_prepare` reloads the authoritative basket, store, and timeslot, then
+creates a short-lived approval bound to that exact snapshot and starts a local
+HTTP approval page (loopback-only, ephemeral port; the approval ID in the URL
+is the only access control). `order_status` re-checks that snapshot against
+the current basket on every call and reports whichever of pending / approved /
+declined / expired / invalidated / committed / commit_failed applies —
+`CheckoutGate` (`internal/checkout`) owns this state machine, and it is a
+sibling of `ReweGateway` under `ShoppingCore`, not a REWE-facing gateway
+itself. Approval is invalidated by any relevant state change, checked lazily
+on each read rather than by a background timer.
 
-Approval is invalidated by any relevant state change. The `CheckoutGate`
-performs the commit only after the human approves. A timeout is never treated as
-a simple failure or retried blindly; order history and basket state are used to
-reconcile an ambiguous outcome.
+The human reviews and approves or declines directly on that local page —
+`order_prepare`'s tool output always returns the URL as a plain fallback
+(DESIGN.md's original "or through a local fallback" path); server-initiated
+URL elicitation (the primary path this section originally described) is not
+wired up yet, tracked as a follow-up rather than assumed. `ApprovalURL` is
+deliberately a GET-only, side-effect-free link: the actual approve/decline
+POST endpoints require a second, per-approval action token that is embedded
+only in the rendered review page's HTML, never returned through
+`order_prepare`'s structured output or any other MCP tool result. This means
+the value the model actually receives is never, by itself, sufficient to
+approve or decline — a caller must first load and parse the human-facing
+page to obtain the token that does that (`internal/checkout/page.go`,
+`TestOrderPrepareOutputAloneCannotApprove`). This raises the bar
+meaningfully but is not a complete proof of human presence: a fully
+HTTP-capable agent could still fetch and parse that page itself. Real
+proof-of-human-interaction is still pending server-initiated URL
+elicitation, tracked as the same follow-up as above. The commit itself is
+deliberately stubbed and always fails closed: `docs/spikes/checkout.md`
+(cards #11/#12) confirmed checkout creation happens server-side on
+`www.rewe.de` and is unobservable by any technique available in that
+environment, and the rest of the sequence is well-evidenced from a real,
+working reference implementation but only against a different REWE host,
+never independently verified on this project's own origin. A timeout is never
+treated as a simple failure or retried blindly; once a real commit exists,
+order history and basket state are what reconcile an ambiguous outcome.
 
 ## Compatibility strategy
 

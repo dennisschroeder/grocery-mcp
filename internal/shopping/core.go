@@ -24,13 +24,14 @@ type Core struct {
 	mu      sync.RWMutex
 	context ShoppingContext
 
-	stores StoresGateway
-	basket BasketGateway
-	orders OrdersGateway
+	stores   StoresGateway
+	basket   BasketGateway
+	orders   OrdersGateway
+	checkout CheckoutGate
 }
 
-func NewCore(auth Authenticator, stores StoresGateway, basket BasketGateway, orders OrdersGateway) *Core {
-	return &Core{auth: auth, stores: stores, basket: basket, orders: orders}
+func NewCore(auth Authenticator, stores StoresGateway, basket BasketGateway, orders OrdersGateway, checkout CheckoutGate) *Core {
+	return &Core{auth: auth, stores: stores, basket: basket, orders: orders, checkout: checkout}
 }
 
 func (c *Core) AuthConnect() AuthStatus {
