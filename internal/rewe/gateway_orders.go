@@ -23,7 +23,7 @@ import (
 // shopping.UpstreamChangeError, the same lesson card #13's
 // decodeFavoriteListID bug taught.
 //
-// receipts_list/receipt_get/GetReceipt were removed (Dennis's decision,
+// receipts_list/receipt_get/GetReceipt were removed (product decision,
 // 2026-08-19): live investigation found no REWE UI path exposing a digital
 // receipts feature separate from order history — "Deine Einkäufe" and each
 // order's own detail view are the only purchase-history surfaces REWE
