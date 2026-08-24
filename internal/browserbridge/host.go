@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-const nativeHostResponseTimeout = defaultPollTimeout + 10*time.Second
+const (
+	nativeHostResponseTimeout = defaultPollTimeout + 10*time.Second
+	socketDialTimeout         = 3 * time.Second
+)
 
 // reconnectRetryInterval and reconnectRetryBudget bound how RunNativeHost
 // reacts to the bridge socket itself being unreachable (the MCP server
@@ -171,7 +174,7 @@ func postResult(ctx context.Context, socketPath string, result PollRequest) erro
 }
 
 func dialSocket(ctx context.Context, socketPath string) (net.Conn, error) {
-	dialer := net.Dialer{Timeout: 3 * time.Second}
+	dialer := net.Dialer{Timeout: socketDialTimeout}
 	return dialer.DialContext(ctx, "unix", socketPath)
 }
 

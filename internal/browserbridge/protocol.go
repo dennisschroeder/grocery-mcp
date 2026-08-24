@@ -7,7 +7,11 @@ import (
 	"io"
 )
 
-const protocolVersion = 2
+const (
+	protocolVersion       = 2
+	peerProtocolVersion   = 1
+	requestIDEncodedBytes = 32
+)
 
 type Operation string
 
@@ -72,6 +76,27 @@ type PollResponse struct {
 	Params    json.RawMessage `json:"params,omitempty"`
 }
 
+// PeerRequest is exchanged between grocery-mcp processes over the bridge
+// socket. The owner executes "call" requests through the same queue as its
+// local callers; "cancel" stops the call with the matching request ID.
+type PeerRequest struct {
+	Version   int             `json:"version"`
+	Type      string          `json:"type"`
+	RequestID string          `json:"request_id"`
+	Operation Operation       `json:"operation,omitempty"`
+	Params    json.RawMessage `json:"params,omitempty"`
+}
+
+// PeerResponse returns a peer call result or acknowledges cancellation.
+type PeerResponse struct {
+	Version   int             `json:"version"`
+	Type      string          `json:"type"`
+	RequestID string          `json:"request_id"`
+	OK        bool            `json:"ok,omitempty"`
+	Code      string          `json:"code,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+}
+
 func DecodePortMessage(data []byte) (*PortMessage, error) {
 	var message PortMessage
 	if err := strictDecode(data, &message); err != nil {
@@ -118,6 +143,102 @@ func DecodePollResponse(data []byte) (*PollResponse, error) {
 func EncodePollResponse(response PollResponse) ([]byte, error) {
 	response.Version = protocolVersion
 	return json.Marshal(response)
+}
+
+func DecodePeerRequest(data []byte) (*PeerRequest, error) {
+	var request PeerRequest
+	if err := strictDecode(data, &request); err != nil {
+		return nil, err
+	}
+	if request.Version != peerProtocolVersion {
+		return nil, fmt.Errorf("unsupported bridge message")
+	}
+	if request.Type != "call" && request.Type != "cancel" {
+		return nil, fmt.Errorf("unsupported bridge message")
+	}
+	if request.RequestID == "" {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	if !validRequestID(request.RequestID) {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	if request.Type == "call" && request.Operation == "" {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	if request.Type == "cancel" && (request.Operation != "" || len(request.Params) != 0) {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	return &request, nil
+}
+
+func EncodePeerRequest(request PeerRequest) ([]byte, error) {
+	request.Version = peerProtocolVersion
+	return json.Marshal(request)
+}
+
+func DecodePeerResponse(data []byte) (*PeerResponse, error) {
+	var response PeerResponse
+	if err := strictDecode(data, &response); err != nil {
+		return nil, err
+	}
+	if response.Version != peerProtocolVersion {
+		return nil, fmt.Errorf("unsupported bridge message")
+	}
+	if response.Type != "call_result" && response.Type != "ack" {
+		return nil, fmt.Errorf("unsupported bridge message")
+	}
+	if response.RequestID == "" {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	if !validRequestID(response.RequestID) {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	if response.Type == "ack" && (!response.OK || response.Code != "" || len(response.Result) != 0) {
+		return nil, fmt.Errorf("invalid bridge message")
+	}
+	if response.Type == "call_result" {
+		if response.OK && response.Code != "" {
+			return nil, fmt.Errorf("invalid bridge message")
+		}
+		if !response.OK && (response.Code == "" || len(response.Result) != 0) {
+			return nil, fmt.Errorf("invalid bridge message")
+		}
+	}
+	return &response, nil
+}
+
+func EncodePeerResponse(response PeerResponse) ([]byte, error) {
+	response.Version = peerProtocolVersion
+	return json.Marshal(response)
+}
+
+func operationFrameFits(requestID string, operation Operation, params json.RawMessage) bool {
+	pollPayload, err := EncodePollResponse(PollResponse{
+		Type:      "operation",
+		RequestID: requestID,
+		Operation: operation,
+		Params:    params,
+	})
+	if err != nil || len(pollPayload) > maxMessageBytes {
+		return false
+	}
+	portPayload, err := EncodePortMessage(PortMessage{
+		Type:      "operation_request",
+		RequestID: requestID,
+		Operation: operation,
+		Params:    params,
+	})
+	return err == nil && len(portPayload) <= maxMessageBytes
+}
+
+func decodeMessageType(data []byte) (string, error) {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Type == "" {
+		return "", fmt.Errorf("invalid bridge message")
+	}
+	return envelope.Type, nil
 }
 
 func strictDecode[T any](data []byte, target *T) error {

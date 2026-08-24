@@ -397,13 +397,13 @@ func TestGatewayApplyBasketMapsCanceledTransportErrorToAmbiguousResult(t *testin
 	}
 }
 
-func TestGatewayApplyBasketMapsContentScriptUnreachableToBridgeUnavailable(t *testing.T) {
+func TestGatewayApplyBasketMapsContentScriptUnreachableToAmbiguousResult(t *testing.T) {
 	gateway := fixedGateway(stubTransport{err: codedStubError{code: "content_script_unreachable"}})
 	_, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
 		Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 1}},
 	})
-	var bridgeErr *shopping.BridgeUnavailableError
-	if !errors.As(err, &bridgeErr) {
+	var ambiguousErr *shopping.AmbiguousResultError
+	if !errors.As(err, &ambiguousErr) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

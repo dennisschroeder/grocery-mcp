@@ -54,6 +54,34 @@ extension. An MCP-server restart loses the memory-only tab binding, so the
 next connection requires another extension click; it normally does not
 require another REWE login while Chrome still remembers the account.
 
+## Multiple MCP processes
+
+Claude Desktop, Cowork, and Code may each start their own `grocery-mcp serve`
+process. They coexist behind one user-scoped browser transport:
+
+```text
+Desktop serve ─┐
+Cowork serve  ─┼─ local call/cancel IPC ─> elected bridge owner ─> native host ─> extension
+Code serve    ─┘                              (one of the serve processes)
+```
+
+An advisory lock at `bridge.lock` elects exactly one process to own
+`bridge.sock`; only that owner may remove a stale socket or bind a new one.
+Followers forward typed `call`/`cancel` messages to the owner, which places
+them in the same globally correlated, serial browser queue as its own calls.
+The Chrome extension and native-host poll protocol are unchanged.
+
+Only browser transport is shared. Every `serve` process still owns its own
+Auth service, `ShoppingCore`, `ReweGateway`, session, selected store, basket,
+and shopping context. A Cowork request therefore retains Cowork's domain
+state even when a Code process currently owns the bridge.
+
+Closing a follower has no effect on the owner or other clients. After the
+owner exits, the next call that cannot connect before sending any bytes may
+acquire the lock and become owner. A call that was already sent when the
+owner disappeared is never retried automatically because its browser-side
+outcome may be ambiguous.
+
 ## Local installation
 
 Requirements: Google Chrome, an existing human-controlled REWE login in the
