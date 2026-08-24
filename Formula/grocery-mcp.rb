@@ -1,8 +1,8 @@
 class GroceryMcp < Formula
   desc "Local MCP server for grocery shopping (REWE)"
   homepage "https://github.com/dennisschroeder/grocery-mcp"
-  url "https://github.com/dennisschroeder/grocery-mcp/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "e095f7d7fa61d69916413c776366fb4bb171ab2b30bfda0e7cd342abe4863422"
+  url "https://github.com/dennisschroeder/grocery-mcp/archive/refs/tags/v0.3.0.tar.gz"
+  sha256 "eb7adb26743ffd11eeb2c5696867d25748e13e4190916c6df7946eb8e457e65f"
   license "MIT"
 
   depends_on "go" => :build
