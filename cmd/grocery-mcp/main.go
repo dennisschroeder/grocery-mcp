@@ -52,10 +52,8 @@ func run(arguments []string) error {
 func serveMCP() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
-	bridge, err := browserbridge.Listen(browserbridge.DefaultSocketPath())
+	bridge, err := browserbridge.OpenShared(ctx, browserbridge.DefaultSocketPath())
 	if err != nil {
 		return fmt.Errorf("start browser bridge: %w", err)
 	}
@@ -64,24 +62,11 @@ func serveMCP() error {
 	service := auth.NewService(rewe.BrowserValidator{Transport: bridge})
 	defer service.Disconnect()
 	authenticator := newAutoAcceptingAuthenticator(ctx, service)
-	bridgeErrors := make(chan error, 1)
-	go func() {
-		if err := bridge.Serve(ctx); err != nil {
-			bridgeErrors <- err
-			cancel()
-		}
-	}()
 
 	gateway := rewe.Gateway{Transport: bridge}
 	checkoutGate := checkout.NewGate()
 	defer checkoutGate.Close()
-	err = mcpserver.New(shopping.NewCore(authenticator, gateway, gateway, gateway, checkoutGate)).Run(ctx, &mcp.StdioTransport{})
-	select {
-	case bridgeErr := <-bridgeErrors:
-		return fmt.Errorf("browser bridge stopped: %w", bridgeErr)
-	default:
-		return err
-	}
+	return mcpserver.New(shopping.NewCore(authenticator, gateway, gateway, gateway, checkoutGate)).Run(ctx, &mcp.StdioTransport{})
 }
 
 func runNativeHost(origin string) error {
@@ -146,14 +131,11 @@ func bridgeSmoke(arguments []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server, err := browserbridge.Listen(browserbridge.DefaultSocketPath())
+	server, err := browserbridge.OpenShared(ctx, browserbridge.DefaultSocketPath())
 	if err != nil {
 		return fmt.Errorf("start browser bridge: %w", err)
 	}
 	defer server.Close()
-	go func() {
-		_ = server.Serve(ctx)
-	}()
 
 	fmt.Println("Waiting for the grocery-mcp Chrome extension to open its native-messaging port and answer session_identity...")
 	actionContext, cancel := context.WithTimeout(ctx, *timeout)

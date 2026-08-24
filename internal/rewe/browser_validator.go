@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"strings"
 	"time"
@@ -27,18 +26,7 @@ type BrowserValidator struct {
 func (v BrowserValidator) ValidateSession(ctx context.Context) (shopping.SessionIdentity, error) {
 	result, err := v.Transport.Do(ctx, browserbridge.OperationSessionIdentity, nil)
 	if err != nil {
-		var coded browserbridge.CodedError
-		if errors.As(err, &coded) {
-			switch coded.Code() {
-			case "auth_invalid":
-				return shopping.SessionIdentity{}, &shopping.AuthError{Operation: "validate session"}
-			case "rate_limited":
-				return shopping.SessionIdentity{}, &shopping.RateLimitError{Operation: "validate session"}
-			case "content_script_unreachable", "canceled":
-				return shopping.SessionIdentity{}, &shopping.BridgeUnavailableError{Operation: "validate session"}
-			}
-		}
-		return shopping.SessionIdentity{}, &shopping.UpstreamChangeError{Operation: "validate session", Problem: shopping.UpstreamUnexpectedStatus}
+		return shopping.SessionIdentity{}, classifyReadBridgeError("validate session", err)
 	}
 
 	listID, err := decodeFavoriteListID(bytes.NewReader(result))

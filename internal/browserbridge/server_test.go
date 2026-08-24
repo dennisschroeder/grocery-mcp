@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -177,6 +178,20 @@ func TestDoRejectsOperationsOutsideTheAllowlist(t *testing.T) {
 	_, err = server.Do(t.Context(), Operation("delete_account"), nil)
 	var coded CodedError
 	if !errors.As(err, &coded) || coded.Code() != "operation_not_allowed" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDoRejectsNativeEnvelopeOverflowBeforeQueueing(t *testing.T) {
+	socketPath := shortSocketPath(t)
+	server, err := Listen(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	_, err = server.Do(t.Context(), OperationBasketApply, operationEnvelopeBoundaryParams(t))
+	var coded CodedError
+	if !errors.As(err, &coded) || coded.Code() != "invalid_params" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -376,8 +391,132 @@ func TestConcurrentDoCallersEachGetTheirOwnResult(t *testing.T) {
 	}
 }
 
+func TestConcurrentPollsNeverDispatchMoreThanOneBrowserOperation(t *testing.T) {
+	socketPath := shortSocketPath(t)
+	server, err := Listen(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	serveInBackground(t, server, ctx)
+
+	done := make(chan error, 2)
+	for _, params := range []json.RawMessage{json.RawMessage(`{"call":1}`), json.RawMessage(`{"call":2}`)} {
+		go func(params json.RawMessage) {
+			_, err := server.Do(ctx, OperationProductsSearch, params)
+			done <- err
+		}(params)
+	}
+	first := pollOperation(t, socketPath)
+
+	secondConnection, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondConnection.Close()
+	payload, _ := EncodePollRequest(PollRequest{Type: "poll"})
+	if err := WriteFrame(secondConnection, payload); err != nil {
+		t.Fatal(err)
+	}
+	secondResponse := make(chan *PollResponse, 1)
+	go func() {
+		payload, err := ReadFrame(secondConnection)
+		if err != nil {
+			return
+		}
+		response, err := DecodePollResponse(payload)
+		if err == nil {
+			secondResponse <- response
+		}
+	}()
+
+	select {
+	case response := <-secondResponse:
+		t.Fatalf("second poll dispatched before first result: %#v", response)
+	case <-time.After(50 * time.Millisecond):
+	}
+	postOperationResult(t, socketPath, first.RequestID, true, "", first.Params)
+
+	var second *PollResponse
+	select {
+	case second = <-secondResponse:
+		if second.Type != "operation" {
+			t.Fatalf("unexpected second response: %#v", second)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second poll was not released")
+	}
+	postOperationResult(t, socketPath, second.RequestID, true, "", second.Params)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestResultEnvelopeLimitIsCommonToLocalAndPeerCallers(t *testing.T) {
+	var boundaryResult json.RawMessage
+	for size := maxMessageBytes; size > maxMessageBytes-256; size-- {
+		candidate := json.RawMessage(`"` + strings.Repeat("a", size) + `"`)
+		pollPayload, _ := EncodePollRequest(PollRequest{
+			Type:      "result",
+			RequestID: testPeerRequestID,
+			OK:        true,
+			Result:    candidate,
+		})
+		peerPayload, _ := EncodePeerResponse(PeerResponse{
+			Type:      "call_result",
+			RequestID: testPeerRequestID,
+			OK:        true,
+			Result:    candidate,
+		})
+		if len(pollPayload) <= maxMessageBytes && len(peerPayload) > maxMessageBytes {
+			boundaryResult = candidate
+			break
+		}
+	}
+	if boundaryResult == nil {
+		t.Fatal("did not find the poll/peer envelope boundary")
+	}
+	result := normalizePollResult(pollResult{ok: true, result: boundaryResult})
+	if result.ok || result.code != "malformed_response" || len(result.result) != 0 {
+		t.Fatalf("unexpected normalized result: %#v", result)
+	}
+}
+
 func TestRelayDeadlinesLeaveResponseHeadroom(t *testing.T) {
 	if defaultPollTimeout >= serverConnectionTimeout || serverConnectionTimeout >= nativeHostResponseTimeout {
 		t.Fatalf("deadlines are not ordered: poll=%s server=%s host=%s", defaultPollTimeout, serverConnectionTimeout, nativeHostResponseTimeout)
+	}
+	minimumResultTimeout := nativeHostResponseTimeout + socketDialTimeout + serverConnectionTimeout
+	if operationResultTimeout <= minimumResultTimeout {
+		t.Fatalf("operation timeout %s has no post-result headroom beyond %s", operationResultTimeout, minimumResultTimeout)
+	}
+}
+
+func TestLateValidResultArrivesBeforeOperationTimeout(t *testing.T) {
+	socketPath := shortSocketPath(t)
+	server, err := Listen(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.operationTimeout = 200 * time.Millisecond
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	serveInBackground(t, server, ctx)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := server.Do(ctx, OperationBasketGet, nil)
+		done <- err
+	}()
+	operation := pollOperation(t, socketPath)
+	time.Sleep(100 * time.Millisecond)
+	postOperationResult(t, socketPath, operation.RequestID, true, "", json.RawMessage(`{"items":[]}`))
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

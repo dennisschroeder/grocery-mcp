@@ -27,34 +27,46 @@ has achieved.
 ## Process topology and lifetimes
 
 ```text
+Desktop serve ─┐  each owns Auth, ShoppingCore, ReweGateway,
+Cowork serve  ─┼  Shop Session, and Shopping Context
+Code serve    ─┘
+        |
+        | typed call/cancel IPC for followers
+        v
+elected browser-bridge owner (a role inside exactly one serve process)
+  owns the global serial operation queue and browser request correlation
+        |
+        | user-only local socket; native-host poll/result
+        v
+grocery-mcp native-host mode (long-lived while the Chrome port stays open)
+        |
+        | Chrome Native Messaging (persistent port, extension-initiated)
+        v
 Chrome + MV3 extension
-  owns the signed-in REWE tab; runs a content script limited to
-  https://www.rewe.de/* that executes exactly the allowlisted operations
-          |
-          | Chrome Native Messaging (persistent port, extension-initiated)
-          v
-grocery-mcp native-host mode (long-lived while the port stays open)
-  drives a poll loop: ask the MCP server for queued work, relay it down
-  to the content script, relay the structured result back
-          |
-          | user-only local socket
-          v
-grocery-mcp MCP-server mode (one active v1 instance per OS user)
-  owns ShoppingCore, ReweGateway, Shop Session, and Shopping Context;
-  queues operations and blocks until a poll delivers a result
+  owns the signed-in REWE tab; runs the allowlisted operations in a content
+  script limited to https://www.rewe.de/*
 ```
 
 Chrome only ever lets the *extension* initiate a Native Messaging connection
 — a Go process can never push work into Chrome unprompted. The native host
 therefore long-polls the server ("is there queued work for the browser?")
 once the extension's port is open, rather than the server pushing directly.
-This keeps the server's per-connection socket handling (already hardened:
-origin pinning, strict decoding, size limits) unchanged — one request per
-connection — instead of turning it into a multiplexed duplex stream.
+The same socket also accepts strictly versioned peer `call` and `cancel`
+messages from follower MCP processes. Native-host poll/result remains one
+request per connection; a peer call keeps its connection open only until its
+matching `call_result`. All message families retain strict decoding and the
+64-KiB frame limit.
+
+The bridge owner is elected with a user-only advisory file lock held for the
+entire ownership lifetime. Only the lock holder may clean up a stale socket
+and bind the endpoint. Followers never own shared domain state: they forward
+only browser operations, so account, store, basket, session, and shopping
+context remain isolated per MCP process. Owner loss permits takeover on a
+later operation only when the prior connection failed before any request was
+sent; an in-flight operation is never retried blindly.
 
 - The content script's fixed operation switch is the real security boundary:
-  no operation string outside `session_identity`, `products_search`, or
-  `basket_get` is ever acted on, and every fetch target is either a literal
+  no operation string outside its typed allowlist is ever acted on, and every fetch target is either a literal
   or built only from validated, typed parameters — never a caller-supplied
   URL, method, header, or script.
 - The Go-side operation allowlist is defense in depth only; it cannot itself
@@ -84,10 +96,13 @@ connection — instead of turning it into a multiplexed duplex stream.
   before — this was found and fixed by review before the live gate, not by
   the live gate itself.
 - Failure codes distinguish `auth_invalid` (→ `ReauthRequired`),
-  `rate_limited` (→ `RateLimitError`), `content_script_unreachable` and a
-  transport-level `canceled` (→ `BridgeUnavailableError`, e.g. the bound tab
-  closed or navigated away mid-operation), and everything else collapses to
-  a generic upstream-change classification.
+  `rate_limited` (→ `RateLimitError`) and transport failures. Reads map
+  `content_script_unreachable`, `canceled`, `ambiguous_result`, and
+  pre-send `bridge_unavailable` to temporary bridge unavailability.
+  Mutations instead map the first three to `AmbiguousResultError`, because
+  REWE may already have executed them; only `bridge_unavailable` proves that
+  no request bytes were sent. Mutations are therefore never retried blindly.
+  Everything else collapses to a generic upstream-change classification.
 - Mutations are still never retried without an operation-specific
   idempotency or reconciliation rule; this card added no mutating
   operations.
@@ -115,10 +130,12 @@ connection — instead of turning it into a multiplexed duplex stream.
   over a smaller patch to outcome B.
 - **A fully duplexed, multiplexed Unix-socket protocol** (server pushes
   operations down an always-open connection) was rejected in favor of the
-  poll model to keep the server's existing hardened per-connection handling
-  unchanged, at the cost of poll latency (bounded by a ~25s poll timeout,
-  not felt as user-visible latency since operations resolve on the next poll
-  cycle in practice).
+  extension-initiated poll model. Peer MCP calls share the socket through
+  discriminated request types, but they do not replace or broaden the native
+  host's poll protocol.
+- **A separate long-lived bridge daemon** was rejected for this iteration.
+  Electing one existing `serve` process provides the same single browser
+  endpoint without adding installation, supervision, or upgrade lifecycle.
 - **General browser automation** (e.g. CDP against the user's normal
   profile, a persistent automation daemon) remains rejected for the same
   reasons as ADR-0001: it broadens browser access and couples the server to
