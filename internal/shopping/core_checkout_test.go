@@ -69,10 +69,12 @@ func TestCorePrepareOrderBindsCurrentBasketStoreAndTimeSlot(t *testing.T) {
 	// the store/basket/timeslot rebound afterward (WithAccount invalidates
 	// everything on a change, and is a no-op only once the identity it sees
 	// already matches).
-	if _, err := core.boundContext(); err != nil {
+	if _, err := core.boundContext(t.Context()); err != nil {
 		t.Fatalf("boundContext() error = %v", err)
 	}
-	core.rebindContext(core.Context().WithStore("store-1").WithBasket("basket-1").WithTimeSlot("slot-1"))
+	if err := core.rebindContext(t.Context(), core.Context().WithStore("store-1").WithBasket("basket-1").WithTimeSlot("slot-1")); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := core.PrepareOrder(t.Context())
 	if err != nil {
@@ -81,12 +83,12 @@ func TestCorePrepareOrderBindsCurrentBasketStoreAndTimeSlot(t *testing.T) {
 	if got.ID != "approval-1" || got.Status != ApprovalPending {
 		t.Fatalf("PrepareOrder() = %#v", got)
 	}
-	if gotBasket.ID != "basket-1" || gotStore != "store-1" || gotSlot != "slot-1" {
+	if gotBasket.ID != "basket-1" || gotBasket.StoreID != "store-1" || gotBasket.TimeSlotID != "slot-1" || gotStore != "store-1" || gotSlot != "slot-1" {
 		t.Fatalf("Prepare() called with basket=%#v store=%q slot=%q", gotBasket, gotStore, gotSlot)
 	}
 }
 
-func TestCoreOrderStatusPassesFreshBasketToGate(t *testing.T) {
+func TestCoreOrderStatusPassesFreshBasketAndSharedBindingsToGate(t *testing.T) {
 	freshBasket := Basket{ID: "basket-1", Total: Money{Cents: 500, Currency: "EUR"}}
 	var gotID ApprovalID
 	var gotBasket Basket
@@ -97,6 +99,12 @@ func TestCoreOrderStatusPassesFreshBasketToGate(t *testing.T) {
 		},
 	}
 	core := NewCore(boundCheckoutAuth(), nil, &fakeCheckoutBasketGateway{basket: freshBasket}, nil, gate)
+	if _, err := core.boundContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.rebindContext(t.Context(), core.Context().WithStore("store-1").WithBasket("basket-1").WithTimeSlot("slot-2")); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := core.OrderStatus(t.Context(), "approval-1")
 	if err != nil {
@@ -105,7 +113,7 @@ func TestCoreOrderStatusPassesFreshBasketToGate(t *testing.T) {
 	if got.Status != ApprovalInvalidated {
 		t.Fatalf("OrderStatus() = %#v", got)
 	}
-	if gotID != "approval-1" || gotBasket.ID != "basket-1" {
+	if gotID != "approval-1" || gotBasket.ID != "basket-1" || gotBasket.StoreID != "store-1" || gotBasket.TimeSlotID != "slot-2" {
 		t.Fatalf("Status() called with id=%q basket=%#v", gotID, gotBasket)
 	}
 }

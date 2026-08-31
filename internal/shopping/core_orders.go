@@ -4,7 +4,7 @@ import "context"
 
 func (c *Core) ListOrders(ctx context.Context, page PageRequest) (OrderPage, error) {
 	return ReadWithRefresh(ctx, c.auth, func(ctx context.Context) (OrderPage, error) {
-		sc, err := c.boundContext()
+		sc, err := c.boundContext(ctx)
 		if err != nil {
 			return OrderPage{}, err
 		}
@@ -14,7 +14,7 @@ func (c *Core) ListOrders(ctx context.Context, page PageRequest) (OrderPage, err
 
 func (c *Core) GetOrder(ctx context.Context, id OrderID) (Order, error) {
 	return ReadWithRefresh(ctx, c.auth, func(ctx context.Context) (Order, error) {
-		sc, err := c.boundContext()
+		sc, err := c.boundContext(ctx)
 		if err != nil {
 			return Order{}, err
 		}

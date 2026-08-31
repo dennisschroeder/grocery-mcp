@@ -5,6 +5,10 @@ date: 2026-08-18
 
 # Browser-executed REWE transport
 
+The context-isolation decision below is superseded by
+[ADR-0003](0003-shared-shopping-context.md). The browser-transport decision
+and its security boundary remain accepted.
+
 ADR-0001's provisional direct-HTTP-session topology (outcome B) is rejected:
 card #4's live gate delivered a valid, browser-sourced `rstp` through the
 exact-origin Native Messaging bridge, but REWE's API rejected it as
@@ -59,11 +63,11 @@ matching `call_result`. All message families retain strict decoding and the
 
 The bridge owner is elected with a user-only advisory file lock held for the
 entire ownership lifetime. Only the lock holder may clean up a stale socket
-and bind the endpoint. Followers never own shared domain state: they forward
-only browser operations, so account, store, basket, session, and shopping
-context remain isolated per MCP process. Owner loss permits takeover on a
-later operation only when the prior connection failed before any request was
-sent; an in-flight operation is never retried blindly.
+and bind the endpoint. Followers forward browser operations and use ADR-0003's
+separate account-scoped context repository; session bindings remain isolated
+per MCP process. Owner loss permits takeover on a later operation only when
+the prior connection failed before any request was sent; an in-flight
+operation is never retried blindly.
 
 - The content script's fixed operation switch is the real security boundary:
   no operation string outside its typed allowlist is ever acted on, and every fetch target is either a literal

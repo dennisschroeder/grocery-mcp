@@ -3,7 +3,7 @@ async function fetchWithStandardMapping(url, extraHeaders) {
   try {
     response = await fetch(url, { credentials: "same-origin", headers: extraHeaders });
   } catch {
-    return { ok: false, code: "upstream_changed" };
+    return { ok: false, code: "ambiguous_result" };
   }
 
   if (response.status === 401 || response.status === 403) return { ok: false, code: "auth_invalid" };
@@ -153,7 +153,7 @@ async function fetchJSONMutation(url, method, body, headers) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    return { ok: false, code: "upstream_changed" };
+    return { ok: false, code: "ambiguous_result" };
   }
 
   if (response.status === 401 || response.status === 403) return { ok: false, code: "auth_invalid" };
@@ -174,12 +174,35 @@ function handleBasketGet(params) {
   return fetchJSONMutation(url, "GET", undefined, BASKET_HEADERS);
 }
 
+// REWE's API has no account-level "current basket" endpoint. The shop UI
+// does fetch its active basket by ID, however, and same-origin resource
+// timing exposes only that request URL (never headers or response content).
+// This recovers the ID after another client or an earlier process opened the
+// existing basket without broad browser permissions.
+async function handleBasketDiscover() {
+  const pattern = /\/shop\/api\/baskets\/([^/?]+)(?:[/?]|$)/;
+  const entries = performance.getEntriesByType("resource");
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const match = pattern.exec(entries[index]?.name ?? "");
+    const basketId = match ? validatedBasketId(match[1]) : null;
+    if (!basketId) continue;
+    const basket = await handleBasketGet({ basket_id: basketId });
+    if (basket.ok) return { ok: true, result: { found: true, basket: basket.result } };
+  }
+  return { ok: true, result: { found: false } };
+}
+
 function validatedApplyChange(change) {
   const listingId = change?.listing_id;
   const quantity = change?.quantity;
   if (typeof listingId !== "string" || listingId.trim() === "" || listingId.length > 200) return null;
   if (!Number.isInteger(quantity) || quantity < 0 || quantity > 999) return null;
   return { listingId, quantity };
+}
+
+function basketIdFromResult(result) {
+  const basket = result?.basket ?? result;
+  return validatedBasketId(basket?.id);
 }
 
 // Applies exactly one line-item change and reports its own outcome — REWE
@@ -206,16 +229,30 @@ async function applyOneBasketChange(basketId, rawChange) {
   return { listing_id: listingId, ...outcome };
 }
 
-function handleBasketApply(params) {
-  const basketId = typeof params?.basket_id === "string" ? params.basket_id : "";
+async function handleBasketApply(params) {
+  let basketId = validatedBasketId(params?.basket_id) ?? "";
   const changes = Array.isArray(params?.changes) ? params.changes : null;
   if (!changes || changes.length === 0 || changes.length > 50) {
-    return Promise.resolve({ ok: false, code: "invalid_params" });
+    return { ok: false, code: "invalid_params" };
   }
-  return Promise.all(changes.map((change) => applyOneBasketChange(basketId, change))).then((results) => ({
+
+  const results = [];
+  for (const change of changes) {
+    const outcome = await applyOneBasketChange(basketId, change);
+    results.push(outcome);
+    basketId = basketIdFromResult(outcome.result) ?? basketId;
+  }
+
+  if (!basketId) return { ok: true, result: { changes: results } };
+  const reconciliation = await handleBasketGet({ basket_id: basketId });
+  return {
     ok: true,
-    result: { changes: results },
-  }));
+    result: {
+      changes: results,
+      basket: reconciliation.ok ? reconciliation.result : null,
+      reconciliation_code: reconciliation.ok ? "" : reconciliation.code,
+    },
+  };
 }
 
 // storeContextHeaders builds the rd-market-id/rd-postcode/rd-service-types
@@ -291,6 +328,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case "basket_get":
       handleBasketGet(message?.params).then(sendResponse);
+      break;
+    case "basket_discover":
+      handleBasketDiscover().then(sendResponse);
       break;
     case "basket_apply":
       handleBasketApply(message?.params).then(sendResponse);

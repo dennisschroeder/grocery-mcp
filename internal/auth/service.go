@@ -147,6 +147,18 @@ func (s *Service) Accept(ctx context.Context, binding *browserbridge.TabBinding)
 			return &BridgeError{code: "reauth_required"}
 		}
 		s.state = StateFailed
+		var bridgeErr *shopping.BridgeUnavailableError
+		if errors.As(err, &bridgeErr) {
+			return &BridgeError{code: "bridge_unavailable"}
+		}
+		var rateErr *shopping.RateLimitError
+		if errors.As(err, &rateErr) {
+			return &BridgeError{code: "rate_limited"}
+		}
+		var upstreamErr *shopping.UpstreamChangeError
+		if errors.As(err, &upstreamErr) {
+			return &BridgeError{code: "upstream_changed"}
+		}
 		return &BridgeError{code: "validation_failed"}
 	}
 	if validated.AccountID == "" || validated.ObservedAt.IsZero() {
@@ -221,7 +233,7 @@ func (s *Service) Disconnect() Status {
 func (s *Service) statusLocked() Status {
 	return Status{
 		State:           s.state,
-		ActionRequired:  s.state == StateBootstrapping || s.state == StateRefreshing || s.state == StateReauthRequired,
+		ActionRequired:  s.state == StateBootstrapping || s.state == StateReauthRequired,
 		SessionRevision: s.bindingRevision,
 		ObservedAt:      s.now().UTC(),
 	}

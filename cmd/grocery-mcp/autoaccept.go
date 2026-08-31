@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -24,25 +25,43 @@ type autoAcceptingAuthenticator struct {
 	service *auth.Service
 	now     func() time.Time
 
-	mu      sync.Mutex
-	running bool
+	mu          sync.Mutex
+	running     bool
+	needsAction bool
+	generation  uint64
 }
+
+var automaticRetryInterval = time.Second
+var automaticActionDelay = 30 * time.Second
 
 func newAutoAcceptingAuthenticator(ctx context.Context, service *auth.Service) *autoAcceptingAuthenticator {
 	return &autoAcceptingAuthenticator{ctx: ctx, service: service, now: time.Now}
 }
 
 func (a *autoAcceptingAuthenticator) Connect() shopping.AuthStatus {
-	status := a.service.Connect()
+	a.service.Connect()
 	a.driveAcceptOnce()
-	return status
+	return a.Status()
 }
 
 func (a *autoAcceptingAuthenticator) Status() shopping.AuthStatus {
-	return a.service.Status()
+	status := a.service.Status()
+	a.mu.Lock()
+	running := a.running
+	needsAction := a.needsAction
+	a.mu.Unlock()
+	status.ActionRequired = status.State == shopping.AuthReauthRequired || needsAction
+	if running {
+		status.ActionRequired = false
+	}
+	return status
 }
 
 func (a *autoAcceptingAuthenticator) Disconnect() shopping.AuthStatus {
+	a.mu.Lock()
+	a.generation++
+	a.needsAction = false
+	a.mu.Unlock()
 	return a.service.Disconnect()
 }
 
@@ -67,6 +86,9 @@ func (a *autoAcceptingAuthenticator) driveAcceptOnce() {
 		return
 	}
 	a.running = true
+	a.needsAction = false
+	a.generation++
+	generation := a.generation
 	a.mu.Unlock()
 
 	go func() {
@@ -75,6 +97,43 @@ func (a *autoAcceptingAuthenticator) driveAcceptOnce() {
 			a.running = false
 			a.mu.Unlock()
 		}()
-		_ = a.service.Accept(a.ctx, browserbridge.NewTabBinding(a.now()))
+		started := a.now()
+		for {
+			a.mu.Lock()
+			current := a.generation
+			a.mu.Unlock()
+			if current != generation {
+				return
+			}
+			err := a.service.Accept(a.ctx, browserbridge.NewTabBinding(a.now()))
+			if err == nil || a.ctx.Err() != nil {
+				return
+			}
+			if status := a.service.Status(); status.State == shopping.AuthReauthRequired {
+				return
+			}
+			var coded interface{ Code() string }
+			missingPort := errors.As(err, &coded) && coded.Code() == "bridge_unavailable"
+			if missingPort && a.now().Sub(started) >= automaticActionDelay {
+				a.mu.Lock()
+				a.needsAction = true
+				a.mu.Unlock()
+				return
+			}
+			timer := time.NewTimer(automaticRetryInterval)
+			select {
+			case <-timer.C:
+				a.mu.Lock()
+				current = a.generation
+				a.mu.Unlock()
+				if current != generation {
+					return
+				}
+				a.service.Connect()
+			case <-a.ctx.Done():
+				timer.Stop()
+				return
+			}
+		}
 	}()
 }

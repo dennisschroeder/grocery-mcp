@@ -48,8 +48,11 @@ type BasketChangeOutcome struct {
 }
 
 type BasketApplyOutput struct {
-	Basket   Basket                `json:"basket"`
-	Outcomes []BasketChangeOutcome `json:"outcomes"`
+	Basket                Basket                `json:"basket"`
+	Outcomes              []BasketChangeOutcome `json:"outcomes"`
+	Reconciled            bool                  `json:"reconciled" jsonschema:"true only when basket and per-item quantities were checked against an authoritative post-mutation basket read"`
+	ReconciliationProblem string                `json:"reconciliation_problem,omitempty" jsonschema:"why the authoritative post-mutation check could not be completed; do not retry unknown changes blindly"`
+	ContextSynchronized   bool                  `json:"context_synchronized" jsonschema:"true when the reconciled basket binding was shared with the other grocery-mcp processes"`
 }
 
 type TimeSlot struct {
@@ -59,6 +62,7 @@ type TimeSlot struct {
 	EndsAt     string `json:"ends_at" jsonschema:"UTC end time in RFC 3339 format"`
 	Fee        Money  `json:"fee"`
 	Available  bool   `json:"available"`
+	Selected   bool   `json:"selected"`
 	ObservedAt string `json:"observed_at" jsonschema:"UTC observation time in RFC 3339 format"`
 }
 
@@ -72,9 +76,11 @@ type TimeSlotSelectInput struct {
 }
 
 type TimeSlotSelectOutput struct {
-	StoreID    string `json:"store_id,omitempty"`
-	BasketID   string `json:"basket_id,omitempty"`
-	TimeSlotID string `json:"timeslot_id,omitempty"`
+	StoreID             string `json:"store_id,omitempty"`
+	BasketID            string `json:"basket_id,omitempty"`
+	TimeSlotID          string `json:"timeslot_id,omitempty"`
+	Reconciled          bool   `json:"reconciled"`
+	ContextSynchronized bool   `json:"context_synchronized"`
 }
 
 // RegisterBasketTools registers the basket/timeslot vertical's MCP tools.
@@ -83,7 +89,7 @@ type TimeSlotSelectOutput struct {
 func RegisterBasketTools(server *mcp.Server, core *shopping.Core) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "basket_get",
-		Description: "Return the current REWE basket. Fails with a validation error until at least one item has been added, since REWE has no basket to read before that.",
+		Description: "Return the current REWE basket. If no basket binding is shared yet, discover an existing basket from the signed-in shop tab before failing with a validation error.",
 		Annotations: annotations(true, false, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, Basket, error) {
 		basket, err := core.GetBasket(ctx)
@@ -95,7 +101,7 @@ func RegisterBasketTools(server *mcp.Server, core *shopping.Core) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "basket_apply",
-		Description: "Add, update, or remove basket line items (quantity 0 removes). REWE has no bulk endpoint, so each change is applied independently — one item failing does not fail the others; check each outcome's status.",
+		Description: "Add, update, or remove basket line items (quantity 0 removes). Changes run sequentially and are checked against an authoritative basket read; inspect reconciled and every outcome before retrying anything.",
 		Annotations: mutationAnnotations(false, true, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in BasketApplyInput) (*mcp.CallToolResult, BasketApplyOutput, error) {
 		changes := make([]shopping.BasketChange, 0, len(in.Changes))
@@ -123,17 +129,19 @@ func RegisterBasketTools(server *mcp.Server, core *shopping.Core) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "timeslot_select",
-		Description: "Reserve a pickup timeslot for the current basket.",
+		Description: "Reserve a pickup timeslot at most once, then verify the selected state through timeslots_list. An unresolved post-mutation read returns an ambiguous result and must not be retried blindly.",
 		Annotations: mutationAnnotations(false, false, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in TimeSlotSelectInput) (*mcp.CallToolResult, TimeSlotSelectOutput, error) {
-		next, err := core.SelectTimeSlot(ctx, shopping.TimeSlotID(in.TimeSlotID))
+		selection, err := core.SelectTimeSlot(ctx, shopping.TimeSlotID(in.TimeSlotID))
 		if err != nil {
 			return nil, TimeSlotSelectOutput{}, err
 		}
 		return nil, TimeSlotSelectOutput{
-			StoreID:    string(next.StoreID),
-			BasketID:   string(next.BasketID),
-			TimeSlotID: string(next.TimeSlotID),
+			StoreID:             string(selection.Context.StoreID),
+			BasketID:            string(selection.Context.BasketID),
+			TimeSlotID:          string(selection.Context.TimeSlotID),
+			Reconciled:          selection.Reconciled,
+			ContextSynchronized: selection.ContextSynchronized,
 		}, nil
 	})
 }
@@ -183,7 +191,13 @@ func basketApplyOutput(result shopping.BasketMutationResult) BasketApplyOutput {
 			Problem:           string(outcome.Problem),
 		})
 	}
-	return BasketApplyOutput{Basket: basketOutput(result.Basket), Outcomes: outcomes}
+	return BasketApplyOutput{
+		Basket:                basketOutput(result.Basket),
+		Outcomes:              outcomes,
+		Reconciled:            result.Reconciled,
+		ReconciliationProblem: string(result.ReconciliationProblem),
+		ContextSynchronized:   result.ContextSynchronized,
+	}
 }
 
 func timeSlotOutput(slot shopping.TimeSlot) TimeSlot {
@@ -194,6 +208,7 @@ func timeSlotOutput(slot shopping.TimeSlot) TimeSlot {
 		EndsAt:     slot.EndsAt.UTC().Format(time.RFC3339Nano),
 		Fee:        moneyOutput(slot.Fee),
 		Available:  slot.Available,
+		Selected:   slot.Selected,
 		ObservedAt: slot.ObservedAt.UTC().Format(time.RFC3339Nano),
 	}
 }

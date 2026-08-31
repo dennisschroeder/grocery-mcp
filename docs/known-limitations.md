@@ -1,6 +1,7 @@
 # Known limitations and reauthentication UX
 
-Phase 1 status as of 2026-08-19, after card #10's live-testing rounds
+Phase 1 status as of 2026-08-31, including the multi-process reconciliation
+iteration and earlier live-testing rounds
 against a real, signed-in REWE account. Supersedes the acceptance record in
 [`browser-bridge.md`](browser-bridge.md), which only covers card #13's
 2026-08-18 proof.
@@ -21,11 +22,9 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
   reused product search and never actually worked). 17 real markets
   returned for a real postal code, nearest first, with real market IDs,
   names, and distances — no more manual DevTools workaround needed.
-- Bridge-socket restart: the native host survives the MCP server *process*
-  dying and reconnects automatically once a new one starts listening on the
-  same socket, no fresh extension click needed. This is distinct from a full
-  MCP-server restart losing its in-memory auth/session state — see
-  Reauthentication UX below for that case, which still needs a click.
+- Bridge-socket restart: the native host waits without a retry deadline while
+  Chrome's port remains open and reconnects when a new owner starts. A new
+  process validates automatically before `auth_connect` asks for a click.
 - Tab close/reopen: closing the REWE tab and re-clicking the extension
   correctly recreates it and resumes operation.
 - `basket_apply` (add path) — `POST /shop/api/baskets/listings/{listingId}`
@@ -38,23 +37,14 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
 
 ## Known limitations
 
-- **`basket_get` and `basket_apply`'s update/remove paths are un-live-tested.**
-  Wired against REWE's real `/shop/api/baskets/*` endpoints (URL prefix and
-  field shapes confirmed against `Tobi4s1337/karrt`'s source, and
-  `Product.ID` decodes from the confirmed-real `listingId`); only the add
-  path has been exercised live so far (see above).
-- **`timeslot_select` sends no response-shape guarantee.** The request path
-  and body are confirmed live (see above), but the response body wasn't
-  independently observable from that capture (browser performance timing
-  exposes request paths, not POST response bodies) — `SelectTimeSlot`
-  deliberately does not decode REWE's response at all; a successful call is
-  trusted at face value and the context is rebound locally. If REWE's real
-  response ever needs surfacing (e.g. a reservation expiry), that needs its
-  own live-verified decode. The `customerId` this previously failed closed
-  on was resolved by dropping it entirely — `Tobi4s1337/karrt`'s
-  never-resolved guess turned out not to be required at all, per
-  `yannick-cw/korb`'s real, working implementation and card #11's live
-  confirmation (`docs/spikes/checkout.md`).
+- **Basket update/remove still need final live verification.** The add path
+  and live basket response shape are confirmed. `basket_apply` now performs
+  changes sequentially, discovers the basket ID, and reads the authoritative
+  basket afterward; `reconciled=false` explicitly marks an unresolved read.
+- **Timeslot reconciliation needs final live verification.** The live-proven
+  reservation request is `{slotId}` only. `timeslot_select` now checks the
+  overview before and after the single mutation and returns an ambiguous
+  result if the post-mutation read cannot determine the selected slot.
 - **No digital receipts feature.** `receipts_list`/`receipt_get` were
   removed after live investigation found no REWE UI path for a
   receipts-specific view — REWE's own "Deine Einkäufe" order-history page
@@ -100,7 +90,7 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
 
 | State | `action_required` | `instruction` |
 |---|---|---|
-| `Bootstrapping` | true | "Click the grocery-mcp extension in signed-in Chrome." |
+| `Bootstrapping` / prolonged `Validating` | true | "Click the grocery-mcp extension in signed-in Chrome." |
 | `ReauthRequired` | true | "Log into REWE in Chrome, then click the grocery-mcp extension." |
 | `Active` | false | (empty) |
 
@@ -111,11 +101,9 @@ generic failure. No password, 2FA, or CAPTCHA ever passes through the
 extension; the human always completes REWE login in their own browser tab
 first.
 
-A full MCP-server *process* restart (not just its bridge socket reconnecting
-— see above) loses the memory-only tab binding and auth state entirely
-(nothing is persisted to disk), so the next connection needs one fresh
-extension click even though the underlying REWE browser session is usually
-still valid. This is intentional (AGENTS.md: "store sessions in memory by
-default"), not a bug — the fix in `internal/browserbridge/host.go` only
-covers the socket reconnecting under an already-running server, not a full
-process restart.
+A full MCP-server process restart loses its memory-only Auth service and
+`ShopSessionID`, but not Chrome's native port. `auth_connect` first waits for
+automatic validation through that existing port; only an absent port produces
+the click instruction. Account-scoped Store/Basket/Timeslot identifiers are
+persisted separately in the private bridge runtime directory and contain no
+authentication material.

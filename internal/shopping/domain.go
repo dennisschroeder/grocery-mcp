@@ -134,6 +134,7 @@ const (
 	BasketChangeApplied  BasketChangeStatus = "applied"
 	BasketChangeAdjusted BasketChangeStatus = "adjusted"
 	BasketChangeRejected BasketChangeStatus = "rejected"
+	BasketChangeUnknown  BasketChangeStatus = "unknown"
 )
 
 type BasketChangeProblem string
@@ -142,6 +143,10 @@ const (
 	BasketProblemUnavailable   BasketChangeProblem = "unavailable"
 	BasketProblemOutOfStock    BasketChangeProblem = "out_of_stock"
 	BasketProblemLimitExceeded BasketChangeProblem = "limit_exceeded"
+	BasketProblemAuthInvalid   BasketChangeProblem = "auth_invalid"
+	BasketProblemRateLimited   BasketChangeProblem = "rate_limited"
+	BasketProblemInvalid       BasketChangeProblem = "invalid"
+	BasketProblemUpstream      BasketChangeProblem = "upstream_changed"
 	BasketProblemUnknown       BasketChangeProblem = "unknown"
 )
 
@@ -154,8 +159,30 @@ type BasketChangeOutcome struct {
 }
 
 type BasketMutationResult struct {
-	Basket   Basket
-	Outcomes []BasketChangeOutcome
+	Basket                Basket
+	Outcomes              []BasketChangeOutcome
+	Reconciled            bool
+	ReconciliationProblem ReconciliationProblem
+	ContextSynchronized   bool
+}
+
+type ReconciliationProblem string
+
+const (
+	ReconciliationNone                   ReconciliationProblem = ""
+	ReconciliationAuthInvalid            ReconciliationProblem = "auth_invalid"
+	ReconciliationRateLimited            ReconciliationProblem = "rate_limited"
+	ReconciliationUpstreamChanged        ReconciliationProblem = "upstream_changed"
+	ReconciliationBasketUnavailable      ReconciliationProblem = "basket_unavailable"
+	ReconciliationBasketIDUnknown        ReconciliationProblem = "basket_id_unknown"
+	ReconciliationIncompatibleItemResult ReconciliationProblem = "incompatible_item_result"
+	ReconciliationBridgeInterrupted      ReconciliationProblem = "bridge_interrupted"
+)
+
+type TimeSlotSelectionResult struct {
+	Context             ShoppingContext
+	Reconciled          bool
+	ContextSynchronized bool
 }
 
 type TimeSlot struct {
@@ -165,6 +192,7 @@ type TimeSlot struct {
 	EndsAt     time.Time
 	Fee        Money
 	Available  bool
+	Selected   bool
 	ObservedAt time.Time
 }
 

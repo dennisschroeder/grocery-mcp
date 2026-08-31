@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -66,7 +65,8 @@ func serveMCP() error {
 	gateway := rewe.Gateway{Transport: bridge}
 	checkoutGate := checkout.NewGate()
 	defer checkoutGate.Close()
-	return mcpserver.New(shopping.NewCore(authenticator, gateway, gateway, gateway, checkoutGate)).Run(ctx, &mcp.StdioTransport{})
+	contexts := shopping.NewSharedContextStore(bridge)
+	return mcpserver.New(shopping.NewCore(authenticator, gateway, gateway, gateway, checkoutGate, contexts)).Run(ctx, &mcp.StdioTransport{})
 }
 
 func runNativeHost(origin string) error {
@@ -161,7 +161,7 @@ func bridgeSmoke(arguments []string) error {
 	} else {
 		fmt.Printf("session_identity operation succeeded (%d bytes of JSON).\n", len(result))
 		fmt.Println("Response shape (keys/types only, never values):")
-		fmt.Println(describeJSONShape(result))
+		fmt.Println(rewe.DescribeJSONShape(result))
 	}
 
 	for _, op := range adHocOperations {
@@ -177,7 +177,7 @@ func bridgeSmoke(arguments []string) error {
 		}
 		fmt.Printf("%s operation succeeded (%d bytes of JSON).\n", op.Operation, len(opResult))
 		fmt.Println("Response shape (keys/types only, never values):")
-		fmt.Println(describeJSONShape(opResult))
+		fmt.Println(rewe.DescribeJSONShape(opResult))
 		if op.Operation == "stores_search" {
 			// Market IDs are public store identifiers, not account data — printed
 			// here (unlike every other operation's result) so the next diagnostic
@@ -222,54 +222,6 @@ func bridgeSmoke(arguments []string) error {
 	}
 	service.Disconnect()
 	return nil
-}
-
-// describeJSONShape prints object keys, array lengths, and scalar types —
-// never values — so a real upstream response can be diagnosed against this
-// repo's no-raw-payload rule.
-func describeJSONShape(data []byte) string {
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
-		return fmt.Sprintf("<invalid JSON: %v>", err)
-	}
-	var b strings.Builder
-	writeJSONShape(&b, value, 0, 9)
-	return b.String()
-}
-
-func writeJSONShape(b *strings.Builder, value any, depth, maxDepth int) {
-	indent := strings.Repeat("  ", depth)
-	switch v := value.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		fmt.Fprintf(b, "%sobject{%d keys}\n", indent, len(keys))
-		if depth >= maxDepth {
-			return
-		}
-		for _, k := range keys {
-			fmt.Fprintf(b, "%s  %q:\n", indent, k)
-			writeJSONShape(b, v[k], depth+2, maxDepth)
-		}
-	case []any:
-		fmt.Fprintf(b, "%sarray[%d]\n", indent, len(v))
-		if len(v) > 0 && depth < maxDepth {
-			writeJSONShape(b, v[0], depth+1, maxDepth)
-		}
-	case string:
-		fmt.Fprintf(b, "%sstring\n", indent)
-	case float64:
-		fmt.Fprintf(b, "%snumber\n", indent)
-	case bool:
-		fmt.Fprintf(b, "%sbool\n", indent)
-	case nil:
-		fmt.Fprintf(b, "%snull\n", indent)
-	default:
-		fmt.Fprintf(b, "%s%T\n", indent, v)
-	}
 }
 
 // describeStoresSearchValues prints the market_id/postal_code pairs a

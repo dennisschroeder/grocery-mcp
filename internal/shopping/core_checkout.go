@@ -8,7 +8,12 @@ import "context"
 // mints an approval as a side effect, and AGENTS.md's single-retry-after-
 // refresh policy is for idempotent reads only.
 func (c *Core) PrepareOrder(ctx context.Context) (CheckoutApproval, error) {
-	shoppingContext, err := c.boundContext()
+	identity, unlock, err := c.lockContext(ctx)
+	if err != nil {
+		return CheckoutApproval{}, err
+	}
+	defer unlock()
+	shoppingContext, err := c.boundContextFor(ctx, identity)
 	if err != nil {
 		return CheckoutApproval{}, err
 	}
@@ -19,6 +24,8 @@ func (c *Core) PrepareOrder(ctx context.Context) (CheckoutApproval, error) {
 	if err != nil {
 		return CheckoutApproval{}, err
 	}
+	basket.StoreID = shoppingContext.StoreID
+	basket.TimeSlotID = shoppingContext.TimeSlotID
 	return c.checkout.Prepare(ctx, basket, shoppingContext.StoreID, shoppingContext.TimeSlotID)
 }
 
@@ -26,7 +33,12 @@ func (c *Core) PrepareOrder(ctx context.Context) (CheckoutApproval, error) {
 // the authoritative basket on every call — CheckoutGate.Status, not this
 // method, owns deciding whether that means the approval is still valid.
 func (c *Core) OrderStatus(ctx context.Context, id ApprovalID) (CheckoutApproval, error) {
-	shoppingContext, err := c.boundContext()
+	identity, unlock, err := c.lockContext(ctx)
+	if err != nil {
+		return CheckoutApproval{}, err
+	}
+	defer unlock()
+	shoppingContext, err := c.boundContextFor(ctx, identity)
 	if err != nil {
 		return CheckoutApproval{}, err
 	}
@@ -34,5 +46,7 @@ func (c *Core) OrderStatus(ctx context.Context, id ApprovalID) (CheckoutApproval
 	if err != nil {
 		return CheckoutApproval{}, err
 	}
+	basket.StoreID = shoppingContext.StoreID
+	basket.TimeSlotID = shoppingContext.TimeSlotID
 	return c.checkout.Status(ctx, id, basket)
 }

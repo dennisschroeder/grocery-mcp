@@ -69,7 +69,7 @@ func TestRefreshPreservesBoundSessionWithinIdleWindow(t *testing.T) {
 	}
 	before, _ := service.Identity()
 	current = current.Add(time.Minute)
-	if status := service.Refresh(); status.State != StateRefreshing || !status.ActionRequired {
+	if status := service.Refresh(); status.State != StateRefreshing || status.ActionRequired {
 		t.Fatalf("unexpected refresh status: %#v", status)
 	}
 	if err := service.Accept(t.Context(), browserbridge.NewTabBinding(current)); err != nil {
@@ -180,7 +180,7 @@ func TestAcceptFailsClosed(t *testing.T) {
 		code  string
 	}{
 		{name: "auth", err: &shopping.AuthError{}, state: StateReauthRequired, code: "reauth_required"},
-		{name: "upstream", err: &shopping.UpstreamChangeError{}, state: StateFailed, code: "validation_failed"},
+		{name: "upstream", err: &shopping.UpstreamChangeError{}, state: StateFailed, code: "upstream_changed"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

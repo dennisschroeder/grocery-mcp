@@ -45,14 +45,15 @@ The human acts only when `action_required` is true:
 
 - once to install the unpacked extension and approve its REWE-only host
   permission (no cookie permission is ever requested);
-- once per bootstrap or browser-assisted refresh by clicking the extension;
-- additionally, only after `ReauthRequired`, to log into REWE normally before
-  clicking again.
+- once to establish the Chrome Native Messaging port after Chrome or the
+  extension starts;
+- after `ReauthRequired`, to log into REWE normally. Another extension click
+  is needed only if Chrome's native port is no longer connected.
 
 There is no password, 2FA, CAPTCHA, checkout, or payment entry in the
-extension. An MCP-server restart loses the memory-only tab binding, so the
-next connection requires another extension click; it normally does not
-require another REWE login while Chrome still remembers the account.
+extension. MCP-server restarts lose their local auth object, but the native
+host keeps polling until Chrome closes its port. A new process can therefore
+validate the same browser session automatically without another click.
 
 ## Multiple MCP processes
 
@@ -71,16 +72,20 @@ Followers forward typed `call`/`cancel` messages to the owner, which places
 them in the same globally correlated, serial browser queue as its own calls.
 The Chrome extension and native-host poll protocol are unchanged.
 
-Only browser transport is shared. Every `serve` process still owns its own
-Auth service, `ShoppingCore`, `ReweGateway`, session, selected store, basket,
-and shopping context. A Cowork request therefore retains Cowork's domain
-state even when a Code process currently owns the bridge.
+Every `serve` process owns its own Auth service and short-lived session ID.
+Store, postal code, basket ID, and timeslot ID are account-scoped shared
+context: followers load and update them through the owner. The owner stores
+only those non-auth identifiers in `state.json` inside the user-private bridge
+runtime directory (`0700` directory, `0600` file), so a new leader can resume
+the same basket. Cookies, tokens, and `ShopSessionID` remain memory-only.
 
 Closing a follower has no effect on the owner or other clients. After the
 owner exits, the next call that cannot connect before sending any bytes may
 acquire the lock and become owner. A call that was already sent when the
 owner disappeared is never retried automatically because its browser-side
-outcome may be ambiguous.
+outcome may be ambiguous. The native host waits for the replacement owner
+without a retry deadline and exits only when Chrome closes the port or the
+host is shut down.
 
 ## Local installation
 
