@@ -55,6 +55,11 @@ type BasketApplyOutput struct {
 	ContextSynchronized   bool                  `json:"context_synchronized" jsonschema:"true when the reconciled basket binding was shared with the other grocery-mcp processes"`
 }
 
+type BasketListingsOutput struct {
+	ListingIDs []string `json:"listing_ids" jsonschema:"REWE listing identifiers observed in recent basket requests, newest first"`
+	ObservedAt string   `json:"observed_at" jsonschema:"UTC observation time in RFC 3339 format"`
+}
+
 type TimeSlot struct {
 	ID         string `json:"id"`
 	StoreID    string `json:"store_id"`
@@ -113,6 +118,25 @@ func RegisterBasketTools(server *mcp.Server, core *shopping.Core) {
 			return nil, BasketApplyOutput{}, err
 		}
 		return nil, basketApplyOutput(result), nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "basket_listings_get",
+		Description: "Return validated REWE listing IDs observed in recent basket requests in the connected shop tab, newest first. This read-only recovery tool does not change or bind the basket.",
+		Annotations: annotations(true, false, true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, BasketListingsOutput, error) {
+		snapshot, err := core.GetBasketListings(ctx)
+		if err != nil {
+			return nil, BasketListingsOutput{}, err
+		}
+		listingIDs := make([]string, 0, len(snapshot.ListingIDs))
+		for _, id := range snapshot.ListingIDs {
+			listingIDs = append(listingIDs, string(id))
+		}
+		return nil, BasketListingsOutput{
+			ListingIDs: listingIDs,
+			ObservedAt: snapshot.ObservedAt.UTC().Format(time.RFC3339Nano),
+		}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

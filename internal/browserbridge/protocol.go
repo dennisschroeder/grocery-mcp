@@ -16,18 +16,19 @@ const (
 type Operation string
 
 const (
-	OperationSessionIdentity Operation = "session_identity"
-	OperationStoresSearch    Operation = "stores_search"
-	OperationProductsSearch  Operation = "products_search"
-	OperationBasketGet       Operation = "basket_get"
-	OperationBasketDiscover  Operation = "basket_discover"
-	OperationBasketApply     Operation = "basket_apply"
-	OperationTimeslotsList   Operation = "timeslots_list"
-	OperationTimeslotReserve Operation = "timeslot_reserve"
-	OperationOrdersList      Operation = "orders_list"
-	OperationOrderGet        Operation = "order_get"
-	operationSharedStateGet  Operation = "_shared_state_get"
-	operationSharedStatePut  Operation = "_shared_state_put"
+	OperationSessionIdentity   Operation = "session_identity"
+	OperationStoresSearch      Operation = "stores_search"
+	OperationProductsSearch    Operation = "products_search"
+	OperationBasketGet         Operation = "basket_get"
+	OperationBasketDiscover    Operation = "basket_discover"
+	OperationBasketListingsGet Operation = "basket_listings_get"
+	OperationBasketApply       Operation = "basket_apply"
+	OperationTimeslotsList     Operation = "timeslots_list"
+	OperationTimeslotReserve   Operation = "timeslot_reserve"
+	OperationOrdersList        Operation = "orders_list"
+	OperationOrderGet          Operation = "order_get"
+	operationSharedStateGet    Operation = "_shared_state_get"
+	operationSharedStatePut    Operation = "_shared_state_put"
 )
 
 // allowlisted is the Go-side operation check. It is defense in depth only —
@@ -36,7 +37,7 @@ const (
 func (op Operation) allowlisted() bool {
 	switch op {
 	case OperationSessionIdentity, OperationStoresSearch, OperationProductsSearch,
-		OperationBasketGet, OperationBasketDiscover, OperationBasketApply, OperationTimeslotsList, OperationTimeslotReserve,
+		OperationBasketGet, OperationBasketDiscover, OperationBasketListingsGet, OperationBasketApply, OperationTimeslotsList, OperationTimeslotReserve,
 		OperationOrdersList, OperationOrderGet:
 		return true
 	default:

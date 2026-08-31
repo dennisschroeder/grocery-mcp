@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,28 @@ import (
 // LineItem, Timeslot types) carry a currency field of their own — unlike
 // ProductPricing.currency, which products_search does observe.
 const currencyEUR = "EUR"
+
+var basketListingIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,200}$`)
+
+type basketListingsPayload struct {
+	ListingIDs []string `json:"listing_ids"`
+}
+
+func (basketListingsPayload) criticalFields() []string { return []string{"listing_ids"} }
+
+func (p basketListingsPayload) validate() shopping.UpstreamProblem {
+	seen := make(map[string]struct{}, len(p.ListingIDs))
+	for _, id := range p.ListingIDs {
+		if !basketListingIDPattern.MatchString(id) {
+			return shopping.UpstreamIncompatiblePayload
+		}
+		if _, exists := seen[id]; exists {
+			return shopping.UpstreamIncompatiblePayload
+		}
+		seen[id] = struct{}{}
+	}
+	return ""
+}
 
 // GetBasket implements shopping.BasketGateway. REWE has no "current basket"
 // endpoint independent of an id — GET /baskets/{basketId} needs one, and
@@ -64,6 +87,22 @@ func (g Gateway) GetBasket(ctx context.Context, shoppingContext shopping.Shoppin
 		return shopping.Basket{}, err
 	}
 	return payload.toBasket(g.now()), nil
+}
+
+func (g Gateway) GetBasketListings(ctx context.Context, _ shopping.ShoppingContext) (shopping.BasketListingSnapshot, error) {
+	result, err := g.Transport.Do(ctx, browserbridge.OperationBasketListingsGet, nil)
+	if err != nil {
+		return shopping.BasketListingSnapshot{}, classifyReadBridgeError("get basket listings", err)
+	}
+	payload, err := decodeCritical[basketListingsPayload]("basket.listings.get", result)
+	if err != nil {
+		return shopping.BasketListingSnapshot{}, err
+	}
+	listingIDs := make([]shopping.ProductID, 0, len(payload.ListingIDs))
+	for _, id := range payload.ListingIDs {
+		listingIDs = append(listingIDs, shopping.ProductID(id))
+	}
+	return shopping.BasketListingSnapshot{ListingIDs: listingIDs, ObservedAt: g.now()}, nil
 }
 
 // ApplyBasket implements shopping.BasketGateway. REWE has no bulk basket

@@ -25,17 +25,27 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
 - Bridge-socket restart: the native host waits without a retry deadline while
   Chrome's port remains open and reconnects when a new owner starts. A new
   process validates automatically before `auth_connect` asks for a click.
+  Individual validation attempts time out and retry, so a lost bridge response
+  cannot leave one MCP process permanently stuck in `Validating`.
 - Tab close/reopen: closing the REWE tab and re-clicking the extension
   correctly recreates it and resumes operation.
 - `basket_apply` (add path) — `POST /shop/api/baskets/listings/{listingId}`
   confirmed live (card #11/#12, 2026-08-21, explicit human sign-off):
   no `basketId` prefix needed, REWE resolves/creates the basket implicitly.
   `basket_get` and `basket_apply`'s update/remove paths remain untested.
+- `basket_listings_get` — read-only recovery of validated listing IDs from
+  recent basket request URLs in the connected shop tab. It returns newest
+  first and never exposes request headers, cookies, or response bodies.
 - `timeslot_select` — `POST /shop/api/timeslot-reservations` confirmed live
   (card #11/#12, 2026-08-21, explicit human sign-off) with a request
   body of `{slotId}` only, no `customerId`/`wwIdent`/`zipCode` — see below.
 
 ## Known limitations
+
+- **Listing discovery depends on recent tab activity.**
+  `basket_listings_get` returns an empty list when the tab's resource timing
+  buffer contains no recent basket request; it does not scrape the DOM or
+  issue a mutation to manufacture one.
 
 - **Basket update/remove still need final live verification.** The add path
   and live basket response shape are confirmed. `basket_apply` now performs

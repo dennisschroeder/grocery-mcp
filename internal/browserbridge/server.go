@@ -16,6 +16,7 @@ import (
 
 const (
 	defaultPollTimeout      = 25 * time.Second
+	defaultDispatchTimeout  = 5 * time.Second
 	serverConnectionTimeout = defaultPollTimeout + 5*time.Second
 	operationResultTimeout  = nativeHostResponseTimeout + socketDialTimeout + serverConnectionTimeout + time.Second
 )
@@ -60,6 +61,7 @@ type Server struct {
 	removeDirectory  bool
 	closeOnce        sync.Once
 	pollTimeout      time.Duration
+	dispatchTimeout  time.Duration
 	operationTimeout time.Duration
 
 	queue chan *pendingOperation
@@ -106,6 +108,7 @@ func listenPrepared(socketPath string, removeDirectory bool) (*Server, error) {
 		statePath:        statePath,
 		removeDirectory:  removeDirectory,
 		pollTimeout:      defaultPollTimeout,
+		dispatchTimeout:  defaultDispatchTimeout,
 		operationTimeout: operationResultTimeout,
 		queue:            make(chan *pendingOperation),
 		slot:             make(chan struct{}, 1),
@@ -383,7 +386,7 @@ func (s *Server) expireOperation(ctx context.Context, requestID string) {
 	s.releaseSlot()
 	if pending {
 		select {
-		case operation.result <- pollResult{code: "content_script_unreachable"}:
+		case operation.result <- pollResult{code: "operation_timeout"}:
 		default:
 		}
 	}
@@ -455,8 +458,18 @@ func (s *Server) Do(ctx context.Context, op Operation, params json.RawMessage) (
 		dispatched: make(chan struct{}),
 	}
 
+	dispatchTimer := time.NewTimer(s.dispatchTimeout)
+	defer dispatchTimer.Stop()
 	select {
 	case s.queue <- operation:
+	case <-dispatchTimer.C:
+		s.mu.Lock()
+		busy := s.activeRequestID != ""
+		s.mu.Unlock()
+		if busy {
+			return nil, &bridgeError{code: "queue_busy"}
+		}
+		return nil, &bridgeError{code: "not_dispatched"}
 	case <-ctx.Done():
 		return nil, &bridgeError{code: "canceled"}
 	}
@@ -499,10 +512,11 @@ func validRequestID(requestID string) bool {
 // (content_script_unreachable, when the bound tab closes or navigates away
 // mid-operation) — it isn't trusted verbatim since it arrives from a
 // different codebase built against the same contract, not compiled against
-// these Go constants.
+// these Go constants. not_dispatched, queue_busy, and operation_timeout are
+// generated locally around dispatch when no poll, slot, or response arrives.
 func safeErrorCode(code string) string {
 	switch code {
-	case "not_implemented", "auth_invalid", "rate_limited", "upstream_changed", "malformed_response", "unknown_operation", "invalid_params", "content_script_unreachable":
+	case "not_implemented", "auth_invalid", "rate_limited", "upstream_changed", "malformed_response", "unknown_operation", "invalid_params", "content_script_unreachable", "not_dispatched", "queue_busy", "operation_timeout":
 		return code
 	default:
 		return "operation_failed"

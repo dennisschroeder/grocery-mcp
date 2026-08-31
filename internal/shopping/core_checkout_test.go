@@ -30,6 +30,9 @@ type fakeCheckoutBasketGateway struct {
 func (f *fakeCheckoutBasketGateway) GetBasket(context.Context, ShoppingContext) (Basket, error) {
 	return f.basket, f.err
 }
+func (f *fakeCheckoutBasketGateway) GetBasketListings(context.Context, ShoppingContext) (BasketListingSnapshot, error) {
+	return BasketListingSnapshot{}, errors.New("not implemented")
+}
 func (f *fakeCheckoutBasketGateway) ApplyBasket(context.Context, ShoppingContext, BasketMutation) (BasketMutationResult, error) {
 	return BasketMutationResult{}, errors.New("not implemented")
 }

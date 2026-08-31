@@ -237,7 +237,7 @@ func operationEnvelopeBoundaryParams(t *testing.T) json.RawMessage {
 func TestOperationAllowlist(t *testing.T) {
 	for _, op := range []Operation{
 		OperationSessionIdentity, OperationStoresSearch, OperationProductsSearch,
-		OperationBasketGet, OperationBasketApply, OperationTimeslotsList, OperationTimeslotReserve,
+		OperationBasketGet, OperationBasketDiscover, OperationBasketListingsGet, OperationBasketApply, OperationTimeslotsList, OperationTimeslotReserve,
 		OperationOrdersList, OperationOrderGet,
 	} {
 		if !op.allowlisted() {

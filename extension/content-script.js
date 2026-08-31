@@ -192,6 +192,51 @@ async function handleBasketDiscover() {
   return { ok: true, result: { found: false } };
 }
 
+const LISTING_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
+const REWE_ORIGIN = "https://www.rewe.de";
+
+function listingIDsFromResourceEntries(entries) {
+  const patterns = [
+    /^\/shop\/api\/baskets\/listings\/([^/]+)\/?$/,
+    /^\/shop\/api\/baskets\/[^/]+\/listings\/([^/]+)\/?$/,
+  ];
+  const listingIds = [];
+  const seen = new Set();
+  for (let index = entries.length - 1; index >= 0; index--) {
+    let resourceURL;
+    try {
+      resourceURL = new URL(entries[index]?.name ?? "");
+    } catch {
+      continue;
+    }
+    if (resourceURL.origin !== REWE_ORIGIN) continue;
+    let encoded = null;
+    for (const pattern of patterns) {
+      const match = pattern.exec(resourceURL.pathname);
+      if (match) {
+        encoded = match[1];
+        break;
+      }
+    }
+    if (!encoded) continue;
+    let listingId;
+    try {
+      listingId = decodeURIComponent(encoded);
+    } catch {
+      continue;
+    }
+    if (!LISTING_ID_PATTERN.test(listingId) || seen.has(listingId)) continue;
+    seen.add(listingId);
+    listingIds.push(listingId);
+  }
+  return listingIds;
+}
+
+function handleBasketListingsGet() {
+  const entries = performance.getEntriesByType("resource");
+  return Promise.resolve({ ok: true, result: { listing_ids: listingIDsFromResourceEntries(entries) } });
+}
+
 function validatedApplyChange(change) {
   const listingId = change?.listing_id;
   const quantity = change?.quantity;
@@ -331,6 +376,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case "basket_discover":
       handleBasketDiscover().then(sendResponse);
+      break;
+    case "basket_listings_get":
+      handleBasketListingsGet().then(sendResponse);
       break;
     case "basket_apply":
       handleBasketApply(message?.params).then(sendResponse);
