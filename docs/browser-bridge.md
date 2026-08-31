@@ -71,6 +71,9 @@ An advisory lock at `bridge.lock` elects exactly one process to own
 Followers forward typed `call`/`cancel` messages to the owner, which places
 them in the same globally correlated, serial browser queue as its own calls.
 The Chrome extension and native-host poll protocol are unchanged.
+The user-scoped runtime directory is `/tmp/grocery-mcp-<uid>` and deliberately
+does not depend on `TMPDIR` or `XDG_RUNTIME_DIR`, which may differ between MCP
+hosts and Chrome Native Messaging.
 
 Every `serve` process owns its own Auth service and short-lived session ID.
 Store, postal code, basket ID, and timeslot ID are account-scoped shared

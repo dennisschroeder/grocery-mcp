@@ -49,10 +49,14 @@ func run(arguments []string) error {
 }
 
 func serveMCP() error {
+	return serveMCPAt(browserbridge.DefaultSocketPath())
+}
+
+func serveMCPAt(socketPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bridge, err := browserbridge.OpenShared(ctx, browserbridge.DefaultSocketPath())
+	bridge, err := browserbridge.OpenShared(ctx, socketPath)
 	if err != nil {
 		return fmt.Errorf("start browser bridge: %w", err)
 	}
