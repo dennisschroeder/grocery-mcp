@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -19,9 +20,10 @@ func TestTwoServeProcessesInitializeAndRemainActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(runtimeDirectory) })
-	first := startServeProcess(t, runtimeDirectory)
+	socketPath := filepath.Join(runtimeDirectory, "bridge.sock")
+	first := startServeProcess(t, socketPath)
 	defer first.stop(t)
-	second := startServeProcess(t, runtimeDirectory)
+	second := startServeProcess(t, socketPath)
 	defer second.stop(t)
 
 	first.initialize(t, 1)
@@ -37,7 +39,7 @@ func TestServeProcessHelper(t *testing.T) {
 	if os.Getenv("GROCERY_MCP_SERVE_HELPER") != "1" {
 		return
 	}
-	if err := serveMCP(); err != nil {
+	if err := serveMCPAt(os.Getenv("GROCERY_MCP_SERVE_SOCKET_PATH")); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -51,12 +53,12 @@ type serveProcess struct {
 	stderr  bytes.Buffer
 }
 
-func startServeProcess(t *testing.T, runtimeDirectory string) *serveProcess {
+func startServeProcess(t *testing.T, socketPath string) *serveProcess {
 	t.Helper()
 	command := exec.Command(os.Args[0], "-test.run=^TestServeProcessHelper$")
 	command.Env = append(os.Environ(),
 		"GROCERY_MCP_SERVE_HELPER=1",
-		"XDG_RUNTIME_DIR="+runtimeDirectory,
+		"GROCERY_MCP_SERVE_SOCKET_PATH="+socketPath,
 	)
 	stdin, err := command.StdinPipe()
 	if err != nil {

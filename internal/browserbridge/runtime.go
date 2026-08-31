@@ -12,18 +12,15 @@ import (
 )
 
 const (
-	socketFilename = "bridge.sock"
-	lockFilename   = "bridge.lock"
+	runtimeBaseDirectory = "/tmp"
+	socketFilename       = "bridge.sock"
+	lockFilename         = "bridge.lock"
 )
 
 var ErrServerRunning = errors.New("browser bridge server is already running")
 
 func DefaultSocketPath() string {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = os.TempDir()
-	}
-	return filepath.Join(base, "grocery-mcp-"+strconv.Itoa(os.Getuid()), socketFilename)
+	return filepath.Join(runtimeBaseDirectory, "grocery-mcp-"+strconv.Itoa(os.Getuid()), socketFilename)
 }
 
 func prepareSocketPath(path string) (bool, error) {
