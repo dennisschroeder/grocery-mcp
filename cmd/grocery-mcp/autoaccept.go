@@ -18,24 +18,40 @@ import (
 // native host polls the server for work — so nothing pushes into Accept
 // anymore; something has to proactively drive validation once Connect enters
 // Bootstrapping, the way bridge-smoke's CLI harness does manually. This type
-// is that missing driver for the real server, one background attempt per
-// Connect call.
+// is that missing driver for the real server, with bounded attempts and
+// automatic retries.
 type autoAcceptingAuthenticator struct {
 	ctx     context.Context
 	service *auth.Service
 	now     func() time.Time
 
-	mu          sync.Mutex
-	running     bool
-	needsAction bool
-	generation  uint64
+	mu                sync.Mutex
+	running           bool
+	needsAction       bool
+	generation        uint64
+	driverCancel      context.CancelFunc
+	driverDone        chan struct{}
+	restartPending    bool
+	retryInterval     time.Duration
+	actionDelay       time.Duration
+	validationTimeout time.Duration
 }
 
-var automaticRetryInterval = time.Second
-var automaticActionDelay = 30 * time.Second
+const (
+	automaticRetryInterval     = time.Second
+	automaticActionDelay       = 30 * time.Second
+	automaticValidationTimeout = 90 * time.Second
+)
 
 func newAutoAcceptingAuthenticator(ctx context.Context, service *auth.Service) *autoAcceptingAuthenticator {
-	return &autoAcceptingAuthenticator{ctx: ctx, service: service, now: time.Now}
+	return &autoAcceptingAuthenticator{
+		ctx:               ctx,
+		service:           service,
+		now:               time.Now,
+		retryInterval:     automaticRetryInterval,
+		actionDelay:       automaticActionDelay,
+		validationTimeout: automaticValidationTimeout,
+	}
 }
 
 func (a *autoAcceptingAuthenticator) Connect() shopping.AuthStatus {
@@ -61,8 +77,18 @@ func (a *autoAcceptingAuthenticator) Disconnect() shopping.AuthStatus {
 	a.mu.Lock()
 	a.generation++
 	a.needsAction = false
+	a.restartPending = false
+	cancel := a.driverCancel
+	done := a.driverDone
 	a.mu.Unlock()
-	return a.service.Disconnect()
+	if cancel != nil {
+		cancel()
+	}
+	status := a.service.Disconnect()
+	if done != nil {
+		<-done
+	}
+	return status
 }
 
 func (a *autoAcceptingAuthenticator) Identity() (shopping.SessionIdentity, bool) {
@@ -80,8 +106,12 @@ func (a *autoAcceptingAuthenticator) RefreshAndValidate(ctx context.Context) err
 // service's own state, not this goroutine's return value, is what auth_status
 // reports.
 func (a *autoAcceptingAuthenticator) driveAcceptOnce() {
+	status := a.service.Status()
 	a.mu.Lock()
 	if a.running {
+		if status.State == shopping.AuthBootstrapping {
+			a.restartPending = true
+		}
 		a.mu.Unlock()
 		return
 	}
@@ -89,51 +119,83 @@ func (a *autoAcceptingAuthenticator) driveAcceptOnce() {
 	a.needsAction = false
 	a.generation++
 	generation := a.generation
+	driverContext, cancelDriver := context.WithCancel(a.ctx)
+	done := make(chan struct{})
+	a.driverCancel = cancelDriver
+	a.driverDone = done
 	a.mu.Unlock()
 
-	go func() {
-		defer func() {
-			a.mu.Lock()
-			a.running = false
+	go a.runAcceptDriver(driverContext, cancelDriver, done, generation)
+}
+
+func (a *autoAcceptingAuthenticator) runAcceptDriver(driverContext context.Context, cancelDriver context.CancelFunc, done chan struct{}, generation uint64) {
+	for {
+		a.runAcceptGeneration(driverContext, generation)
+
+		a.mu.Lock()
+		state := a.service.Status().State
+		if a.restartPending && state == shopping.AuthBootstrapping && driverContext.Err() == nil {
+			a.restartPending = false
+			a.needsAction = false
+			a.generation++
+			generation = a.generation
 			a.mu.Unlock()
-		}()
-		started := a.now()
-		for {
+			continue
+		}
+		a.restartPending = false
+		a.running = false
+		if a.driverDone == done {
+			a.driverCancel = nil
+			a.driverDone = nil
+		}
+		close(done)
+		a.mu.Unlock()
+		cancelDriver()
+		return
+	}
+}
+
+func (a *autoAcceptingAuthenticator) runAcceptGeneration(driverContext context.Context, generation uint64) {
+	started := a.now()
+	for {
+		a.mu.Lock()
+		current := a.generation
+		a.mu.Unlock()
+		if current != generation {
+			return
+		}
+		attemptContext, cancelAttempt := context.WithTimeout(driverContext, a.validationTimeout)
+		err := a.service.Accept(attemptContext, browserbridge.NewTabBinding(a.now()))
+		cancelAttempt()
+		if err == nil || driverContext.Err() != nil {
+			return
+		}
+		if status := a.service.Status(); status.State == shopping.AuthReauthRequired {
+			return
+		}
+		var coded interface{ Code() string }
+		missingPort := errors.As(err, &coded) && coded.Code() == "bridge_unavailable"
+		if missingPort && a.now().Sub(started) >= a.actionDelay {
 			a.mu.Lock()
-			current := a.generation
+			if a.generation == generation && driverContext.Err() == nil {
+				a.needsAction = true
+			}
+			a.mu.Unlock()
+			return
+		}
+		timer := time.NewTimer(a.retryInterval)
+		select {
+		case <-timer.C:
+			a.mu.Lock()
+			current = a.generation
 			a.mu.Unlock()
 			if current != generation {
 				return
 			}
-			err := a.service.Accept(a.ctx, browserbridge.NewTabBinding(a.now()))
-			if err == nil || a.ctx.Err() != nil {
-				return
-			}
-			if status := a.service.Status(); status.State == shopping.AuthReauthRequired {
-				return
-			}
-			var coded interface{ Code() string }
-			missingPort := errors.As(err, &coded) && coded.Code() == "bridge_unavailable"
-			if missingPort && a.now().Sub(started) >= automaticActionDelay {
-				a.mu.Lock()
-				a.needsAction = true
-				a.mu.Unlock()
-				return
-			}
-			timer := time.NewTimer(automaticRetryInterval)
-			select {
-			case <-timer.C:
-				a.mu.Lock()
-				current = a.generation
-				a.mu.Unlock()
-				if current != generation {
-					return
-				}
-				a.service.Connect()
-			case <-a.ctx.Done():
-				timer.Stop()
-				return
-			}
+			a.service.Connect()
+		case <-driverContext.Done():
+			timer.Stop()
+			return
 		}
-	}()
+	}
 }

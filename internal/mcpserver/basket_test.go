@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -27,9 +28,14 @@ func (stubBasketAuthenticator) RefreshAndValidate(context.Context) error { retur
 
 type stubBasketGateway struct {
 	getBasket      func(context.Context, shopping.ShoppingContext) (shopping.Basket, error)
+	getListings    func(context.Context, shopping.ShoppingContext) (shopping.BasketListingSnapshot, error)
 	applyBasket    func(context.Context, shopping.ShoppingContext, shopping.BasketMutation) (shopping.BasketMutationResult, error)
 	listTimeSlots  func(context.Context, shopping.ShoppingContext) (shopping.TimeSlotList, error)
 	selectTimeSlot func(context.Context, shopping.ShoppingContext, shopping.TimeSlotID) (shopping.ShoppingContext, error)
+}
+
+func (g stubBasketGateway) GetBasketListings(ctx context.Context, sc shopping.ShoppingContext) (shopping.BasketListingSnapshot, error) {
+	return g.getListings(ctx, sc)
 }
 
 func (g stubBasketGateway) GetBasket(ctx context.Context, sc shopping.ShoppingContext) (shopping.Basket, error) {
@@ -95,7 +101,7 @@ func TestBasketToolsAreReachableThroughMCP(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	want := []string{"basket_apply", "basket_get", "timeslot_select", "timeslots_list"}
+	want := []string{"basket_apply", "basket_get", "basket_listings_get", "timeslot_select", "timeslots_list"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools are %v, want %v", names, want)
 	}
@@ -112,7 +118,7 @@ func TestBasketToolAnnotationsReflectMutability(t *testing.T) {
 			t.Fatalf("%s has incomplete annotations", tool.Name)
 		}
 		switch tool.Name {
-		case "basket_get", "timeslots_list":
+		case "basket_get", "basket_listings_get", "timeslots_list":
 			if !tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint {
 				t.Fatalf("%s should be read-only and idempotent: %#v", tool.Name, tool.Annotations)
 			}
@@ -124,6 +130,27 @@ func TestBasketToolAnnotationsReflectMutability(t *testing.T) {
 				t.Fatalf("%s must not claim idempotency", tool.Name)
 			}
 		}
+	}
+}
+
+func TestBasketListingsGetReturnsObservedListingIDs(t *testing.T) {
+	observedAt := time.Date(2026, 8, 31, 18, 0, 0, 0, time.UTC)
+	gateway := stubBasketGateway{
+		getListings: func(context.Context, shopping.ShoppingContext) (shopping.BasketListingSnapshot, error) {
+			return shopping.BasketListingSnapshot{ListingIDs: []shopping.ProductID{"listing-new", "listing-old"}, ObservedAt: observedAt}, nil
+		},
+	}
+	session := newBasketTestSession(t, gateway)
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "basket_listings_get"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("basket_listings_get returned an error result: %+v", result.Content)
+	}
+	got := structuredContent[BasketListingsOutput](t, result)
+	if !slices.Equal(got.ListingIDs, []string{"listing-new", "listing-old"}) || got.ObservedAt != observedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("basket_listings_get output = %#v", got)
 	}
 }
 

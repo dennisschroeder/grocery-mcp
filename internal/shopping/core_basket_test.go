@@ -13,9 +13,14 @@ import (
 // authenticator_stub_test.go.
 type fakeBasketGateway struct {
 	getBasket      func(context.Context, ShoppingContext) (Basket, error)
+	getListings    func(context.Context, ShoppingContext) (BasketListingSnapshot, error)
 	applyBasket    func(context.Context, ShoppingContext, BasketMutation) (BasketMutationResult, error)
 	listTimeSlots  func(context.Context, ShoppingContext) (TimeSlotList, error)
 	selectTimeSlot func(context.Context, ShoppingContext, TimeSlotID) (ShoppingContext, error)
+}
+
+func (f *fakeBasketGateway) GetBasketListings(ctx context.Context, sc ShoppingContext) (BasketListingSnapshot, error) {
+	return f.getListings(ctx, sc)
 }
 
 func (f *fakeBasketGateway) GetBasket(ctx context.Context, sc ShoppingContext) (Basket, error) {
@@ -74,6 +79,25 @@ func TestCoreGetBasketRetriesOnceAfterAuthErrorThenRefresh(t *testing.T) {
 	}
 	if attempts != 2 || auth.refreshCalls != 1 {
 		t.Fatalf("attempts = %d, refreshCalls = %d, want 2 and 1", attempts, auth.refreshCalls)
+	}
+}
+
+func TestCoreGetBasketListingsRequiresIdentityAndReturnsGatewayResult(t *testing.T) {
+	core := NewCore(&stubAuthenticator{}, nil, &fakeBasketGateway{}, nil, nil)
+	_, err := core.GetBasketListings(t.Context())
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("unexpected error without identity: %v", err)
+	}
+
+	want := BasketListingSnapshot{ListingIDs: []ProductID{"listing-1"}}
+	gateway := &fakeBasketGateway{
+		getListings: func(context.Context, ShoppingContext) (BasketListingSnapshot, error) { return want, nil },
+	}
+	core = NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil, nil)
+	got, err := core.GetBasketListings(t.Context())
+	if err != nil || len(got.ListingIDs) != 1 || got.ListingIDs[0] != "listing-1" {
+		t.Fatalf("GetBasketListings() = %#v, %v", got, err)
 	}
 }
 

@@ -48,3 +48,6 @@ jobs:
             echo "checking $f"
             node --check "$f"
           done
+
+      - name: Test extension scripts
+        run: node --test extension/*.test.js

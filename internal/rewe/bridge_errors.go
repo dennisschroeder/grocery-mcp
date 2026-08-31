@@ -18,8 +18,10 @@ func classifyReadBridgeError(operation string, err error) error {
 			return &shopping.AuthError{Operation: operation}
 		case "rate_limited":
 			return &shopping.RateLimitError{Operation: operation}
-		case "content_script_unreachable", "canceled", "ambiguous_result", "bridge_unavailable":
+		case "operation_timeout", "queue_busy", "canceled", "ambiguous_result":
 			return &shopping.BridgeUnavailableError{Operation: operation}
+		case "bridge_unavailable", "not_dispatched", "content_script_unreachable":
+			return &shopping.BridgeUnavailableError{Operation: operation, ActionRequired: true}
 		case "invalid_params":
 			return &shopping.ValidationError{Operation: operation, Field: "params", Problem: shopping.ValidationInvalid}
 		}
@@ -43,9 +45,9 @@ func classifyMutationBridgeError(operation string, err error) error {
 			return &shopping.AuthError{Operation: operation}
 		case "rate_limited":
 			return &shopping.RateLimitError{Operation: operation}
-		case "bridge_unavailable":
-			return &shopping.BridgeUnavailableError{Operation: operation}
-		case "content_script_unreachable", "canceled", "ambiguous_result":
+		case "bridge_unavailable", "not_dispatched", "queue_busy":
+			return &shopping.BridgeUnavailableError{Operation: operation, ActionRequired: true}
+		case "content_script_unreachable", "operation_timeout", "canceled", "ambiguous_result":
 			return &shopping.AmbiguousResultError{Operation: operation}
 		case "invalid_params":
 			return &shopping.ValidationError{Operation: operation, Field: "params", Problem: shopping.ValidationInvalid}

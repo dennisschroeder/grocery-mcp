@@ -33,6 +33,7 @@ type StoresGateway interface {
 
 type BasketGateway interface {
 	GetBasket(context.Context, ShoppingContext) (Basket, error)
+	GetBasketListings(context.Context, ShoppingContext) (BasketListingSnapshot, error)
 	ApplyBasket(context.Context, ShoppingContext, BasketMutation) (BasketMutationResult, error)
 	ListTimeSlots(context.Context, ShoppingContext) (TimeSlotList, error)
 	SelectTimeSlot(context.Context, ShoppingContext, TimeSlotID) (ShoppingContext, error)

@@ -40,7 +40,7 @@ func TestAuthToolsAreReachableThroughMCP(t *testing.T) {
 	slices.Sort(names)
 	want := []string{
 		"auth_connect", "auth_disconnect", "auth_status",
-		"basket_apply", "basket_get",
+		"basket_apply", "basket_get", "basket_listings_get",
 		"order_get", "orders_list",
 		"order_prepare", "order_status",
 		"products_search",

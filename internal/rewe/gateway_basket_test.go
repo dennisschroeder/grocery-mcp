@@ -262,6 +262,39 @@ func TestDecodeTimeSlotsAcceptsTimeSlotsWrapper(t *testing.T) {
 
 // --- GetBasket ---
 
+func TestGatewayGetBasketListingsReturnsValidatedIDs(t *testing.T) {
+	transport := &capturingTransport{result: json.RawMessage(`{"listing_ids":["listing-new","listing-old"]}`)}
+	got, err := fixedGateway(transport).GetBasketListings(t.Context(), shopping.ShoppingContext{})
+	if err != nil {
+		t.Fatalf("GetBasketListings() error = %v", err)
+	}
+	if transport.gotOp != browserbridge.OperationBasketListingsGet || len(transport.gotParams) != 0 {
+		t.Fatalf("transport call = %q %s", transport.gotOp, transport.gotParams)
+	}
+	if len(got.ListingIDs) != 2 || got.ListingIDs[0] != "listing-new" || got.ListingIDs[1] != "listing-old" {
+		t.Fatalf("GetBasketListings() = %#v", got)
+	}
+	if !got.ObservedAt.Equal(fixedNow) {
+		t.Fatalf("ObservedAt = %v, want %v", got.ObservedAt, fixedNow)
+	}
+}
+
+func TestGatewayGetBasketListingsRejectsInvalidOrDuplicateIDs(t *testing.T) {
+	for name, result := range map[string]json.RawMessage{
+		"missing field": json.RawMessage(`{}`),
+		"invalid id":    json.RawMessage(`{"listing_ids":["listing/unsafe"]}`),
+		"duplicate":     json.RawMessage(`{"listing_ids":["listing-1","listing-1"]}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := fixedGateway(stubTransport{result: result}).GetBasketListings(t.Context(), shopping.ShoppingContext{})
+			var upstreamErr *shopping.UpstreamChangeError
+			if !errors.As(err, &upstreamErr) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestGatewayGetBasketRequiresBoundBasketID(t *testing.T) {
 	transport := stubTransport{result: json.RawMessage(`{"found":false}`)}
 	_, err := fixedGateway(transport).GetBasket(t.Context(), shopping.ShoppingContext{})

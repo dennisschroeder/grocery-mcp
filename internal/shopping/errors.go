@@ -34,6 +34,9 @@ func (e *AuthError) Error() string {
 
 type BridgeUnavailableError struct {
 	Operation string
+	// ActionRequired distinguishes a missing bridge endpoint from a lost or
+	// timed-out response that the caller can retry without human intervention.
+	ActionRequired bool
 }
 
 func (e *BridgeUnavailableError) Error() string {

@@ -119,6 +119,11 @@ type Basket struct {
 	ObservedAt time.Time
 }
 
+type BasketListingSnapshot struct {
+	ListingIDs []ProductID
+	ObservedAt time.Time
+}
+
 type BasketChange struct {
 	ProductID ProductID
 	Quantity  int

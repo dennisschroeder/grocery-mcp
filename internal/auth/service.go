@@ -149,6 +149,9 @@ func (s *Service) Accept(ctx context.Context, binding *browserbridge.TabBinding)
 		s.state = StateFailed
 		var bridgeErr *shopping.BridgeUnavailableError
 		if errors.As(err, &bridgeErr) {
+			if !bridgeErr.ActionRequired {
+				return &BridgeError{code: "bridge_unresponsive"}
+			}
 			return &BridgeError{code: "bridge_unavailable"}
 		}
 		var rateErr *shopping.RateLimitError

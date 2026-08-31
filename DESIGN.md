@@ -97,7 +97,7 @@ The interface is task-oriented and typed:
 - `auth_connect`, `auth_status`, `auth_disconnect`
 - `stores_search`, `store_select`
 - `products_search`
-- `basket_get`, `basket_apply`
+- `basket_get`, `basket_listings_get`, `basket_apply`
 - `timeslots_list`, `timeslot_select`
 - `orders_list`, `order_get`
 - `order_prepare`, `order_status` — card #12; no tool on this server can

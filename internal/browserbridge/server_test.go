@@ -196,20 +196,49 @@ func TestDoRejectsNativeEnvelopeOverflowBeforeQueueing(t *testing.T) {
 	}
 }
 
-func TestDoReturnsWhenContextIsCanceledBeforeAPollArrives(t *testing.T) {
+func TestDoReportsNotDispatchedWhenNoPollArrives(t *testing.T) {
 	socketPath := shortSocketPath(t)
 	server, err := Listen(socketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	server.dispatchTimeout = 20 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	_, err = server.Do(ctx, OperationSessionIdentity, nil)
 	var coded CodedError
-	if !errors.As(err, &coded) || coded.Code() != "canceled" {
+	if !errors.As(err, &coded) || coded.Code() != "not_dispatched" {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestDoReportsQueueBusyBeforeDispatchWhenAnotherOperationIsActive(t *testing.T) {
+	socketPath := shortSocketPath(t)
+	server, err := Listen(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.dispatchTimeout = 20 * time.Millisecond
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	serveInBackground(t, server, ctx)
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := server.Do(ctx, OperationSessionIdentity, nil)
+		firstDone <- err
+	}()
+	_ = pollOperation(t, socketPath)
+
+	_, err = server.Do(ctx, OperationSessionIdentity, nil)
+	var coded CodedError
+	if !errors.As(err, &coded) || coded.Code() != "queue_busy" {
+		t.Fatalf("operation error = %v, want queue_busy", err)
+	}
+	cancel()
+	<-firstDone
 }
 
 func TestDoMapsAnUnrecognizedFailureCodeToTheSafeFallback(t *testing.T) {
@@ -518,5 +547,30 @@ func TestLateValidResultArrivesBeforeOperationTimeout(t *testing.T) {
 	postOperationResult(t, socketPath, operation.RequestID, true, "", json.RawMessage(`{"items":[]}`))
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExpiredOperationReportsTimeoutDistinctFromMissingContentScript(t *testing.T) {
+	socketPath := shortSocketPath(t)
+	server, err := Listen(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.operationTimeout = 20 * time.Millisecond
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	serveInBackground(t, server, ctx)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := server.Do(ctx, OperationBasketGet, nil)
+		done <- err
+	}()
+	_ = pollOperation(t, socketPath)
+	err = <-done
+	var coded CodedError
+	if !errors.As(err, &coded) || coded.Code() != "operation_timeout" {
+		t.Fatalf("operation error = %v, want operation_timeout", err)
 	}
 }

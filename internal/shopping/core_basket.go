@@ -28,6 +28,19 @@ func (c *Core) GetBasket(ctx context.Context) (Basket, error) {
 	})
 }
 
+// GetBasketListings is a read-only recovery aid for an unbound basket. It
+// reports listing IDs observed in recent basket requests in the bound REWE
+// tab; it never changes the basket or binds an ID by itself.
+func (c *Core) GetBasketListings(ctx context.Context) (BasketListingSnapshot, error) {
+	return ReadWithRefresh(ctx, c.auth, func(ctx context.Context) (BasketListingSnapshot, error) {
+		shoppingContext, err := c.boundContext(ctx)
+		if err != nil {
+			return BasketListingSnapshot{}, err
+		}
+		return c.basket.GetBasketListings(ctx, shoppingContext)
+	})
+}
+
 // ApplyBasket is a mutation: never wrapped in ReadWithRefresh. A partial
 // per-item failure comes back inside BasketMutationResult.Outcomes, not as
 // an error for the whole call — see BasketGateway.ApplyBasket. On success it

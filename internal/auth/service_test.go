@@ -180,6 +180,8 @@ func TestAcceptFailsClosed(t *testing.T) {
 		code  string
 	}{
 		{name: "auth", err: &shopping.AuthError{}, state: StateReauthRequired, code: "reauth_required"},
+		{name: "bridge missing", err: &shopping.BridgeUnavailableError{ActionRequired: true}, state: StateFailed, code: "bridge_unavailable"},
+		{name: "bridge unresponsive", err: &shopping.BridgeUnavailableError{}, state: StateFailed, code: "bridge_unresponsive"},
 		{name: "upstream", err: &shopping.UpstreamChangeError{}, state: StateFailed, code: "upstream_changed"},
 	}
 	for _, test := range tests {

@@ -21,6 +21,9 @@ type stubCheckoutBasketGateway struct {
 func (g stubCheckoutBasketGateway) GetBasket(context.Context, shopping.ShoppingContext) (shopping.Basket, error) {
 	return g.basket, nil
 }
+func (stubCheckoutBasketGateway) GetBasketListings(context.Context, shopping.ShoppingContext) (shopping.BasketListingSnapshot, error) {
+	return shopping.BasketListingSnapshot{}, nil
+}
 func (g stubCheckoutBasketGateway) ApplyBasket(context.Context, shopping.ShoppingContext, shopping.BasketMutation) (shopping.BasketMutationResult, error) {
 	return shopping.BasketMutationResult{Basket: g.basket}, nil
 }
