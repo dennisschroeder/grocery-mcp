@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,6 +56,7 @@ type pollResult struct {
 type Server struct {
 	listener         net.Listener
 	socketPath       string
+	statePath        string
 	removeDirectory  bool
 	closeOnce        sync.Once
 	pollTimeout      time.Duration
@@ -66,6 +68,7 @@ type Server struct {
 	mu              sync.Mutex
 	pending         map[string]*pendingOperation
 	peers           map[string]context.CancelFunc
+	sharedState     map[string]json.RawMessage
 	activeRequestID string
 }
 
@@ -90,9 +93,17 @@ func listenPrepared(socketPath string, removeDirectory bool) (*Server, error) {
 		_ = os.Remove(socketPath)
 		return nil, err
 	}
+	statePath := filepath.Join(filepath.Dir(socketPath), sharedStateFilename)
+	sharedState, err := loadSharedState(statePath)
+	if err != nil {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+		return nil, err
+	}
 	server := &Server{
 		listener:         listener,
 		socketPath:       socketPath,
+		statePath:        statePath,
 		removeDirectory:  removeDirectory,
 		pollTimeout:      defaultPollTimeout,
 		operationTimeout: operationResultTimeout,
@@ -100,6 +111,7 @@ func listenPrepared(socketPath string, removeDirectory bool) (*Server, error) {
 		slot:             make(chan struct{}, 1),
 		pending:          make(map[string]*pendingOperation),
 		peers:            make(map[string]context.CancelFunc),
+		sharedState:      sharedState,
 	}
 	server.slot <- struct{}{}
 	return server, nil
@@ -189,7 +201,7 @@ func (s *Server) handlePeerCall(ctx context.Context, connection net.Conn, reques
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := s.Do(callContext, request.Operation, request.Params)
+		result, err := s.doPeerCall(callContext, request.Operation, request.Params)
 		done <- outcome{result: result, err: err}
 	}()
 
@@ -210,6 +222,83 @@ func (s *Server) handlePeerCall(ctx context.Context, connection net.Conn, reques
 		cancel()
 		<-done
 	}
+}
+
+func (s *Server) doPeerCall(ctx context.Context, op Operation, params json.RawMessage) (json.RawMessage, error) {
+	switch op {
+	case operationSharedStateGet, operationSharedStatePut:
+		return s.doSharedState(op, params)
+	default:
+		return s.Do(ctx, op, params)
+	}
+}
+
+type sharedStateGetParams struct {
+	Key string `json:"key"`
+}
+
+type sharedStatePutParams struct {
+	Key   string          `json:"key"`
+	Value json.RawMessage `json:"value"`
+}
+
+type sharedStateResult struct {
+	Found bool            `json:"found"`
+	Value json.RawMessage `json:"value,omitempty"`
+}
+
+func (s *Server) doSharedState(op Operation, params json.RawMessage) (json.RawMessage, error) {
+	switch op {
+	case operationSharedStateGet:
+		var request sharedStateGetParams
+		if err := strictDecode(params, &request); err != nil || !validSharedStateKey(request.Key) {
+			return nil, &bridgeError{code: "invalid_params"}
+		}
+		s.mu.Lock()
+		value, found := s.sharedState[request.Key]
+		value = append(json.RawMessage(nil), value...)
+		s.mu.Unlock()
+		result, err := json.Marshal(sharedStateResult{Found: found, Value: value})
+		if err != nil {
+			return nil, &bridgeError{code: "internal_error"}
+		}
+		return result, nil
+	case operationSharedStatePut:
+		var request sharedStatePutParams
+		if err := strictDecode(params, &request); err != nil || !validSharedStateKey(request.Key) || len(request.Value) == 0 || !json.Valid(request.Value) {
+			return nil, &bridgeError{code: "invalid_params"}
+		}
+		s.mu.Lock()
+		previous, existed := s.sharedState[request.Key]
+		s.sharedState[request.Key] = append(json.RawMessage(nil), request.Value...)
+		if err := writeSharedState(s.statePath, s.sharedState); err != nil {
+			if existed {
+				s.sharedState[request.Key] = previous
+			} else {
+				delete(s.sharedState, request.Key)
+			}
+			s.mu.Unlock()
+			return nil, &bridgeError{code: "internal_error"}
+		}
+		s.mu.Unlock()
+		return nil, nil
+	default:
+		return nil, &bridgeError{code: "operation_not_allowed"}
+	}
+}
+
+func validSharedStateKey(key string) bool {
+	if len(key) == 0 || len(key) > 128 || !strings.HasPrefix(key, "shopping:") || len(key) == len("shopping:") {
+		return false
+	}
+	for _, character := range key {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-' || character == ':' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) handlePeerCancel(request *PeerRequest) {

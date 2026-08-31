@@ -39,10 +39,25 @@ func TestConnectDrivesAcceptWithoutAnExternalCaller(t *testing.T) {
 	service := auth.NewService(stubValidator{identity: shopping.SessionIdentity{AccountID: "account", ObservedAt: observedAt}})
 	authenticator := newAutoAcceptingAuthenticator(t.Context(), service)
 
-	if status := authenticator.Connect(); status.State != auth.StateBootstrapping {
+	if status := authenticator.Connect(); status.ActionRequired {
 		t.Fatalf("unexpected status after Connect: %#v", status)
 	}
 	waitForState(t, service, auth.StateActive)
+}
+
+func TestConnectDoesNotRequestActionWhileAutomaticValidationIsRunning(t *testing.T) {
+	started := make(chan struct{})
+	service := auth.NewService(validatorFunc(func(ctx context.Context) (shopping.SessionIdentity, error) {
+		close(started)
+		<-ctx.Done()
+		return shopping.SessionIdentity{}, ctx.Err()
+	}))
+	authenticator := newAutoAcceptingAuthenticator(t.Context(), service)
+	status := authenticator.Connect()
+	if status.ActionRequired {
+		t.Fatalf("automatic validation requested premature human action: %#v", status)
+	}
+	<-started
 }
 
 func TestConnectDrivesAcceptOnceReconnectRetries(t *testing.T) {

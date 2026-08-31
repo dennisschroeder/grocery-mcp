@@ -11,6 +11,7 @@ typed shopping operations, and a fail-closed checkout.
 MCP tools
    |
 ShoppingCore
+   |-- ShoppingContextStore (account-scoped coordination; ADR-0003)
    |-- ReweGateway  (decoding, retry policy, error taxonomy)
    |     |
    |     BrowserBridge -- Chrome Native Messaging -- MV3 extension -- content script
@@ -26,6 +27,12 @@ the browser tab via `BrowserBridge`, not as a Go `http.Client` call (see
 [`ADR-0002`](docs/adr/0002-browser-executed-rewe-transport.md) for why).
 Session sources are internal adapters and do not leak cookie or browser
 concepts into MCP tools.
+
+Multiple local MCP processes share only non-secret shopping bindings through
+`ShoppingContextStore`; account-scoped mutations are serialized across
+processes. The repository reuses the elected owner's private Unix-socket
+runtime but is a distinct capability from `BrowserBridge` transport. See
+[`ADR-0003`](docs/adr/0003-shared-shopping-context.md).
 
 The distribution consists of one Go binary with MCP-server and native-host
 modes plus a small MV3 extension. This is preferred over localhost cookie

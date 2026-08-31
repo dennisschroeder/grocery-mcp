@@ -20,3 +20,7 @@ board.db-wal
 
 # Transient fan-out state for the card skill's execution graphs.
 .agents/
+
+# Local agent state and generated codebase graphs.
+.throughline/
+graphify-out/

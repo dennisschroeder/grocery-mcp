@@ -62,10 +62,20 @@ func (e *ValidationError) Error() string {
 type UpstreamChangeError struct {
 	Operation string
 	Problem   UpstreamProblem
+	// Shape is a structural report of the unexpected response — object
+	// keys, array lengths, and scalar types only, never values — so a real
+	// upstream shape mismatch can be diagnosed without ever printing
+	// account or credential data. Empty when no body was available to
+	// describe (e.g. a malformed/non-object response).
+	Shape string
 }
 
 func (e *UpstreamChangeError) Error() string {
-	return operationError(e.Operation, fmt.Sprintf("upstream response changed (%s)", e.Problem))
+	msg := fmt.Sprintf("upstream response changed (%s)", e.Problem)
+	if e.Shape != "" {
+		msg += "\nobserved shape (keys/types only, never values):\n" + e.Shape
+	}
+	return operationError(e.Operation, msg)
 }
 
 type AmbiguousResultError struct {

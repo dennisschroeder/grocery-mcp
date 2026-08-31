@@ -15,16 +15,8 @@ const (
 	socketDialTimeout         = 3 * time.Second
 )
 
-// reconnectRetryInterval and reconnectRetryBudget bound how RunNativeHost
-// reacts to the bridge socket itself being unreachable (the MCP server
-// process restarting) as opposed to the Chrome port closing (which
-// relayOperation's EOF check handles separately). Overridable by tests via
-// package vars, matching Server.pollTimeout's pattern, since there's no
-// per-call options struct here.
-var (
-	reconnectRetryInterval = 2 * time.Second
-	reconnectRetryBudget   = 60 * time.Second
-)
+// Overridable by tests, matching Server.pollTimeout's pattern.
+var reconnectRetryInterval = 2 * time.Second
 
 // RunNativeHost drives the poll loop for as long as the Chrome port (input,
 // output) stays open: dial the socket, poll, and on a queued operation relay
@@ -35,42 +27,84 @@ var (
 // not the Chrome port closing) does not exit the loop immediately: the port
 // itself is still open and Chrome has no reason to relaunch this process, so
 // exiting here would silently strand the extension until the user re-clicks
-// the action. Instead this retries for up to reconnectRetryBudget, giving a
-// restarting server time to come back up without the extension noticing.
-// Past that budget, a persistently broken socket is treated the same as
-// before: return the error, let the process exit, surface it as a badge.
+// the action. Retry until Chrome closes the port or the process shuts down.
 func RunNativeHost(ctx context.Context, origin, allowedOrigin, socketPath string, input io.Reader, output io.Writer) error {
 	if origin == "" || origin != allowedOrigin || !strings.HasPrefix(origin, "chrome-extension://") {
 		return fmt.Errorf("native host origin is not allowed")
 	}
-	var unreachableSince time.Time
+	portInput := readPortFrames(input)
 	for {
 		response, err := pollOnce(ctx, socketPath)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if unreachableSince.IsZero() {
-				unreachableSince = time.Now()
-			} else if time.Since(unreachableSince) > reconnectRetryBudget {
-				return err
+			closed, waitErr := waitForRetry(ctx, reconnectRetryInterval, portInput)
+			if waitErr != nil {
+				return waitErr
 			}
-			if !sleepOrDone(ctx, reconnectRetryInterval) {
+			if closed {
 				return nil
 			}
 			continue
 		}
-		unreachableSince = time.Time{}
 		if response.Type != "operation" {
+			select {
+			case frame := <-portInput:
+				if errors.Is(frame.err, io.EOF) {
+					return nil
+				}
+				return fmt.Errorf("unexpected operation response while idle")
+			default:
+			}
 			continue
 		}
-		closed, err := relayOperation(ctx, socketPath, input, output, response)
+		closed, err := relayOperation(ctx, socketPath, portInput, output, response)
 		if err != nil {
 			return err
 		}
 		if closed {
 			return nil
 		}
+	}
+}
+
+type portFrame struct {
+	payload []byte
+	err     error
+}
+
+func readPortFrames(input io.Reader) <-chan portFrame {
+	frames := make(chan portFrame, 1)
+	go func() {
+		defer close(frames)
+		for {
+			payload, err := ReadFrame(input)
+			frames <- portFrame{payload: payload, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return frames
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration, portInput <-chan portFrame) (bool, error) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return false, nil
+	case frame, ok := <-portInput:
+		if !ok || errors.Is(frame.err, io.EOF) {
+			return true, nil
+		}
+		if frame.err != nil {
+			return false, frame.err
+		}
+		return false, fmt.Errorf("unexpected operation response while bridge is unavailable")
+	case <-ctx.Done():
+		return true, nil
 	}
 }
 
@@ -112,7 +146,7 @@ func pollOnce(ctx context.Context, socketPath string) (*PollResponse, error) {
 // relayOperation forwards a queued operation down the Chrome port, waits for
 // the matching operation_response, and reports the outcome back to the
 // socket. portClosed is true only when the port read hit a clean EOF.
-func relayOperation(ctx context.Context, socketPath string, input io.Reader, output io.Writer, poll *PollResponse) (portClosed bool, err error) {
+func relayOperation(ctx context.Context, socketPath string, input <-chan portFrame, output io.Writer, poll *PollResponse) (portClosed bool, err error) {
 	request := PortMessage{
 		Type:      "operation_request",
 		RequestID: poll.RequestID,
@@ -142,13 +176,21 @@ func relayOperation(ctx context.Context, socketPath string, input io.Reader, out
 		return false, fmt.Errorf("operation response does not match the pending request")
 	}
 
-	return false, postResult(ctx, socketPath, PollRequest{
+	err = postResult(ctx, socketPath, PollRequest{
 		Type:      "result",
 		RequestID: poll.RequestID,
 		OK:        reply.OK,
 		Code:      reply.Code,
 		Result:    reply.Result,
 	})
+	if err != nil && ctx.Err() == nil {
+		// The browser result cannot be replayed to a replacement owner because
+		// the old request correlation died with it. Keep Chrome's port alive so
+		// later operations recover automatically; the interrupted caller gets
+		// an ambiguous result from the lost owner.
+		return false, nil
+	}
+	return false, err
 }
 
 func postResult(ctx context.Context, socketPath string, result PollRequest) error {
@@ -182,20 +224,14 @@ func dialSocket(ctx context.Context, socketPath string) (net.Conn, error) {
 // os.Stdin in tests) that don't support SetReadDeadline. A timeout leaves
 // the underlying read goroutine running; it is reclaimed when the reader
 // eventually yields data or closes.
-func readFrameWithTimeout(ctx context.Context, reader io.Reader, timeout time.Duration) ([]byte, error) {
-	type readResult struct {
-		payload []byte
-		err     error
-	}
-	done := make(chan readResult, 1)
-	go func() {
-		payload, err := ReadFrame(reader)
-		done <- readResult{payload, err}
-	}()
+func readFrameWithTimeout(ctx context.Context, input <-chan portFrame, timeout time.Duration) ([]byte, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case result := <-done:
+	case result, ok := <-input:
+		if !ok {
+			return nil, io.EOF
+		}
 		return result.payload, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()

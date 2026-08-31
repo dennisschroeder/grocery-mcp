@@ -8,7 +8,7 @@ import "context"
 // before it, so a retry picks up whatever identity the refresh produced.
 func (c *Core) StoresSearch(ctx context.Context, search StoreSearch) (StorePage, error) {
 	return ReadWithRefresh(ctx, c.auth, func(ctx context.Context) (StorePage, error) {
-		bound, err := c.boundContext()
+		bound, err := c.boundContext(ctx)
 		if err != nil {
 			return StorePage{}, err
 		}
@@ -18,7 +18,7 @@ func (c *Core) StoresSearch(ctx context.Context, search StoreSearch) (StorePage,
 
 func (c *Core) ProductsSearch(ctx context.Context, search ProductSearch) (ProductPage, error) {
 	return ReadWithRefresh(ctx, c.auth, func(ctx context.Context) (ProductPage, error) {
-		bound, err := c.boundContext()
+		bound, err := c.boundContext(ctx)
 		if err != nil {
 			return ProductPage{}, err
 		}
@@ -33,7 +33,12 @@ func (c *Core) ProductsSearch(ctx context.Context, search ProductSearch) (Produc
 // gateway, which only owns the market ID) because REWE's timeslot endpoint
 // requires it alongside the market ID as a request header.
 func (c *Core) SelectStore(ctx context.Context, id StoreID, postalCode string) (ShoppingContext, error) {
-	bound, err := c.boundContext()
+	identity, unlock, err := c.lockContext(ctx)
+	if err != nil {
+		return ShoppingContext{}, err
+	}
+	defer unlock()
+	bound, err := c.boundContextFor(ctx, identity)
 	if err != nil {
 		return ShoppingContext{}, err
 	}
@@ -42,6 +47,8 @@ func (c *Core) SelectStore(ctx context.Context, id StoreID, postalCode string) (
 		return ShoppingContext{}, err
 	}
 	next = next.WithPostalCode(postalCode)
-	c.rebindContext(next)
+	if err := c.rebindContext(ctx, next); err != nil {
+		return ShoppingContext{}, err
+	}
 	return next, nil
 }

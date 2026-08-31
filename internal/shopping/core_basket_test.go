@@ -148,7 +148,9 @@ func TestCoreApplyBasketDoesNotClearAnExistingBasketIDWhenResultHasNone(t *testi
 	}
 	auth := &stubAuthenticator{hasIdentity: true, identity: SessionIdentity{AccountID: "account-1"}}
 	core := NewCore(auth, nil, gateway, nil, nil)
-	core.rebindContext(ShoppingContext{AccountID: "account-1", BasketID: "basket-existing"})
+	if err := core.rebindContext(t.Context(), ShoppingContext{AccountID: "account-1", BasketID: "basket-existing"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := core.ApplyBasket(t.Context(), BasketMutation{Changes: []BasketChange{{ProductID: "p1", Quantity: 0}}}); err != nil {
 		t.Fatalf("ApplyBasket() error = %v", err)
 	}
@@ -186,7 +188,7 @@ func TestCoreSelectTimeSlotRebindsContextOnSuccess(t *testing.T) {
 	}
 	core := NewCore(&stubAuthenticator{hasIdentity: true}, nil, gateway, nil, nil)
 	got, err := core.SelectTimeSlot(t.Context(), "slot-1")
-	if err != nil || got != next {
+	if err != nil || got.Context != next || !got.Reconciled || !got.ContextSynchronized {
 		t.Fatalf("SelectTimeSlot() = %#v, %v", got, err)
 	}
 	if core.Context() != next {

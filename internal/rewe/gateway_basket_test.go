@@ -23,6 +23,21 @@ type countingTransport struct {
 	calls int
 }
 
+type sequenceTransport struct {
+	results []json.RawMessage
+	errors  []error
+	calls   int
+}
+
+func (t *sequenceTransport) Do(context.Context, browserbridge.Operation, json.RawMessage) (json.RawMessage, error) {
+	index := t.calls
+	t.calls++
+	if index < len(t.errors) && t.errors[index] != nil {
+		return nil, t.errors[index]
+	}
+	return t.results[index], nil
+}
+
 func (t *countingTransport) Do(context.Context, browserbridge.Operation, json.RawMessage) (json.RawMessage, error) {
 	t.calls++
 	return nil, errors.New("should not be called")
@@ -40,14 +55,20 @@ func basketFixtureSchema() contractfixture.Schema {
 				"price":      contractfixture.ReplaceWith(199),
 				"totalPrice": contractfixture.ReplaceWith(199),
 				"product": contractfixture.Object(map[string]contractfixture.Schema{
-					"id":          contractfixture.ReplaceWith("product-1"),
-					"productName": contractfixture.ReplaceWith("Example Product"),
+					"title": contractfixture.ReplaceWith("Example Product"),
+					"listing": contractfixture.Object(map[string]contractfixture.Schema{
+						"listingId": contractfixture.ReplaceWith("product-1"),
+					}),
 				}),
 			})),
 			"summary": contractfixture.Object(map[string]contractfixture.Schema{
 				"articleCount": contractfixture.ReplaceWith(1),
 				"articlePrice": contractfixture.ReplaceWith(199),
 				"totalPrice":   contractfixture.ReplaceWith(249),
+				"fees": contractfixture.Object(map[string]contractfixture.Schema{
+					"substitutesSurcharge":  contractfixture.ReplaceWith(30),
+					"transportBoxSurcharge": contractfixture.ReplaceWith(20),
+				}),
 			}),
 		}),
 	})
@@ -60,6 +81,7 @@ func timeSlotsFixtureSchema() contractfixture.Schema {
 		"endTime":    contractfixture.ReplaceWith("2026-08-20T09:00:00+02:00"),
 		"serviceFee": contractfixture.ReplaceWith(0),
 		"available":  contractfixture.ReplaceWith(true),
+		"selected":   contractfixture.ReplaceWith(false),
 	}))
 }
 
@@ -78,9 +100,9 @@ func TestBasketFixtureMatchesSanitizedTestdata(t *testing.T) {
       "quantity": 3,
       "price": 129,
       "totalPrice": 387,
-      "product": {"id": "upstream-product-42", "productName": "Upstream Product Name"}
+      "product": {"title": "Upstream Product Name", "listing": {"listingId": "upstream-product-42"}}
     }],
-    "summary": {"articleCount": 3, "articlePrice": 387, "totalPrice": 437},
+    "summary": {"articleCount": 3, "articlePrice": 387, "totalPrice": 437, "fees": {"substitutesSurcharge": 15, "transportBoxSurcharge": 10}},
     "unreviewedInternal": "discard me"
   }
 }`)
@@ -105,6 +127,7 @@ func TestTimeSlotsFixtureMatchesSanitizedTestdata(t *testing.T) {
     "endTime": "2026-08-20T09:00:00+02:00",
     "serviceFee": 0,
     "available": true,
+	"selected": false,
     "internalDebug": "discard me"
   }]`)
 
@@ -135,7 +158,7 @@ func TestDecodeBasketPayloadAcceptsSanitizedFixture(t *testing.T) {
 	if payload.ID != "basket-1" || payload.ServiceSelection.WwIdent != "660500" {
 		t.Fatalf("decodeCritical() = %#v", payload)
 	}
-	if len(payload.LineItems) != 1 || payload.LineItems[0].Product.ID != "product-1" {
+	if len(payload.LineItems) != 1 || payload.LineItems[0].Product.Listing.ListingID != "product-1" {
 		t.Fatalf("decodeCritical() lineItems = %#v", payload.LineItems)
 	}
 }
@@ -240,14 +263,11 @@ func TestDecodeTimeSlotsAcceptsTimeSlotsWrapper(t *testing.T) {
 // --- GetBasket ---
 
 func TestGatewayGetBasketRequiresBoundBasketID(t *testing.T) {
-	transport := &countingTransport{}
+	transport := stubTransport{result: json.RawMessage(`{"found":false}`)}
 	_, err := fixedGateway(transport).GetBasket(t.Context(), shopping.ShoppingContext{})
 	var validationErr *shopping.ValidationError
 	if !errors.As(err, &validationErr) || validationErr.Field != "basket_id" {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if transport.calls != 0 {
-		t.Fatalf("transport called %d times, want 0", transport.calls)
 	}
 }
 
@@ -313,7 +333,7 @@ func TestGatewayApplyBasketRequiresChanges(t *testing.T) {
 }
 
 func TestGatewayApplyBasketAppliesExactMatch(t *testing.T) {
-	result := json.RawMessage(`{"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","serviceSelection":{"wwIdent":"660500"},"lineItems":[{"quantity":2,"price":100,"totalPrice":200,"product":{"id":"p1","productName":"Milk"}}],"summary":{"articleCount":1,"articlePrice":200,"totalPrice":200}}}}]}`)
+	result := json.RawMessage(`{"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","serviceSelection":{"wwIdent":"660500"},"lineItems":[{"quantity":2,"price":100,"totalPrice":200,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":200,"totalPrice":200}}}}]}`)
 	gateway := fixedGateway(stubTransport{result: result})
 	got, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
 		Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 2}},
@@ -333,11 +353,32 @@ func TestGatewayApplyBasketAppliesExactMatch(t *testing.T) {
 	}
 }
 
+func TestGatewayApplyBasketUsesAuthoritativeReconciliationForOutcomes(t *testing.T) {
+	result := json.RawMessage(`{
+		"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","lineItems":[{"quantity":2,"price":100,"totalPrice":200,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":200,"totalPrice":200}}}}],
+		"basket":{"basket":{"id":"basket-9","serviceSelection":{"wwIdent":"660500"},"lineItems":[{"quantity":1,"price":100,"totalPrice":100,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":100,"totalPrice":100}}},
+		"reconciliation_code":""
+	}`)
+	gateway := fixedGateway(stubTransport{result: result})
+	got, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
+		Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 2}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyBasket() error = %v", err)
+	}
+	if !got.Reconciled || got.ReconciliationProblem != "" {
+		t.Fatalf("reconciliation = %v, %q", got.Reconciled, got.ReconciliationProblem)
+	}
+	if got.Outcomes[0].Status != shopping.BasketChangeAdjusted || got.Outcomes[0].AppliedQuantity != 1 {
+		t.Fatalf("outcome = %#v", got.Outcomes[0])
+	}
+}
+
 func TestGatewayApplyBasketDetectsAdjustedQuantity(t *testing.T) {
 	// REWE returns a snapshot showing quantity 3 even though 5 was
 	// requested (e.g. a stock limit) — must surface as Adjusted, not
 	// silently reported as if the full request succeeded.
-	result := json.RawMessage(`{"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","lineItems":[{"quantity":3,"price":100,"totalPrice":300,"product":{"id":"p1","productName":"Milk"}}],"summary":{"articleCount":1,"articlePrice":300,"totalPrice":300}}}}]}`)
+	result := json.RawMessage(`{"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","lineItems":[{"quantity":3,"price":100,"totalPrice":300,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":300,"totalPrice":300}}}}]}`)
 	gateway := fixedGateway(stubTransport{result: result})
 	got, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
 		Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 5}},
@@ -352,11 +393,11 @@ func TestGatewayApplyBasketDetectsAdjustedQuantity(t *testing.T) {
 }
 
 func TestGatewayApplyBasketReportsPerItemRejectionWithoutFailingWholeCall(t *testing.T) {
-	result := json.RawMessage(`{"changes":[` +
-		`{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","lineItems":[{"quantity":1,"price":100,"totalPrice":100,"product":{"id":"p1","productName":"Milk"}}],"summary":{"articleCount":1,"articlePrice":100,"totalPrice":100}}}},` +
-		`{"listing_id":"p2","ok":false,"code":"upstream_changed"}` +
-		`]}`)
-	gateway := fixedGateway(stubTransport{result: result})
+	transport := &sequenceTransport{results: []json.RawMessage{
+		json.RawMessage(`{"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","lineItems":[{"quantity":1,"price":100,"totalPrice":100,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":100,"totalPrice":100}}}}]}`),
+		json.RawMessage(`{"changes":[{"listing_id":"p2","ok":false,"code":"upstream_changed"}]}`),
+	}}
+	gateway := fixedGateway(transport)
 	got, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
 		Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 1}, {ProductID: "p2", Quantity: 1}},
 	})
@@ -369,20 +410,22 @@ func TestGatewayApplyBasketReportsPerItemRejectionWithoutFailingWholeCall(t *tes
 	if got.Outcomes[0].Status != shopping.BasketChangeApplied {
 		t.Fatalf("outcomes[0] = %#v", got.Outcomes[0])
 	}
-	if got.Outcomes[1].Status != shopping.BasketChangeRejected || got.Outcomes[1].Problem != shopping.BasketProblemUnknown {
+	if got.Outcomes[1].Status != shopping.BasketChangeRejected || got.Outcomes[1].Problem != shopping.BasketProblemUpstream {
 		t.Fatalf("outcomes[1] = %#v", got.Outcomes[1])
 	}
 }
 
-func TestGatewayApplyBasketMapsPerItemAuthInvalidToWholeCallAuthError(t *testing.T) {
+func TestGatewayApplyBasketPreservesPerItemAuthFailure(t *testing.T) {
 	result := json.RawMessage(`{"changes":[{"listing_id":"p1","ok":false,"code":"auth_invalid"}]}`)
 	gateway := fixedGateway(stubTransport{result: result})
-	_, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
+	got, err := gateway.ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{
 		Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 1}},
 	})
-	var authErr *shopping.AuthError
-	if !errors.As(err, &authErr) {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("ApplyBasket() error = %v", err)
+	}
+	if got.Reconciled || got.ReconciliationProblem != "auth_invalid" || got.Outcomes[0].Status != shopping.BasketChangeRejected {
+		t.Fatalf("ApplyBasket() = %#v", got)
 	}
 }
 
@@ -405,6 +448,20 @@ func TestGatewayApplyBasketMapsContentScriptUnreachableToAmbiguousResult(t *test
 	var ambiguousErr *shopping.AmbiguousResultError
 	if !errors.As(err, &ambiguousErr) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGatewayApplyBasketPreservesConfirmedOutcomesAfterLaterBridgeFailure(t *testing.T) {
+	transport := &sequenceTransport{
+		results: []json.RawMessage{json.RawMessage(`{"changes":[{"listing_id":"p1","ok":true,"result":{"basket":{"id":"basket-9","lineItems":[{"quantity":1,"price":100,"totalPrice":100,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":100,"totalPrice":100}}}}],"basket":{"id":"basket-9","lineItems":[{"quantity":1,"price":100,"totalPrice":100,"product":{"title":"Milk","listing":{"listingId":"p1"}}}],"summary":{"articleCount":1,"articlePrice":100,"totalPrice":100}}}`)},
+		errors:  []error{nil, codedStubError{code: "ambiguous_result"}, codedStubError{code: "bridge_unavailable"}},
+	}
+	got, err := fixedGateway(transport).ApplyBasket(t.Context(), shopping.ShoppingContext{}, shopping.BasketMutation{Changes: []shopping.BasketChange{{ProductID: "p1", Quantity: 1}, {ProductID: "p2", Quantity: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Outcomes) != 2 || got.Outcomes[0].Status != shopping.BasketChangeApplied || got.Outcomes[1].Status != shopping.BasketChangeUnknown {
+		t.Fatalf("partial outcomes were not preserved: %#v", got)
 	}
 }
 
@@ -518,41 +575,88 @@ func TestGatewayListTimeSlotsFailsClosedWithNoStoreSelected(t *testing.T) {
 
 // --- SelectTimeSlot ---
 
-func TestGatewaySelectTimeSlotFailsClosedOnEmptySlot(t *testing.T) {
-	transport := &countingTransport{}
-	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{}, "")
-	var validationErr *shopping.ValidationError
-	if !errors.As(err, &validationErr) || validationErr.Field != "time_slot_id" {
+type scriptedBridgeCall struct {
+	operation browserbridge.Operation
+	result    json.RawMessage
+	err       error
+}
+
+type scriptedBridgeTransport struct {
+	t      *testing.T
+	calls  []scriptedBridgeCall
+	params []json.RawMessage
+}
+
+func (t *scriptedBridgeTransport) Do(_ context.Context, operation browserbridge.Operation, params json.RawMessage) (json.RawMessage, error) {
+	t.t.Helper()
+	if len(t.params) >= len(t.calls) {
+		t.t.Fatalf("unexpected operation: %s", operation)
+	}
+	call := t.calls[len(t.params)]
+	if operation != call.operation {
+		t.t.Fatalf("operation = %s, want %s", operation, call.operation)
+	}
+	t.params = append(t.params, append(json.RawMessage(nil), params...))
+	return call.result, call.err
+}
+
+var availableSlot = json.RawMessage(`[{"id":"slot-1","startTime":"2026-08-20T08:00:00+02:00","endTime":"2026-08-20T09:00:00+02:00","serviceFee":0,"selected":false}]`)
+var selectedSlot = json.RawMessage(`[{"id":"slot-1","startTime":"2026-08-20T08:00:00+02:00","endTime":"2026-08-20T09:00:00+02:00","serviceFee":0,"selected":true}]`)
+
+func TestGatewaySelectTimeSlotReturnsAnAlreadySelectedSlotWithoutMutation(t *testing.T) {
+	transport := &scriptedBridgeTransport{t: t, calls: []scriptedBridgeCall{{operation: browserbridge.OperationTimeslotsList, result: selectedSlot}}}
+	current := shopping.ShoppingContext{StoreID: "660500", PostalCode: "10115"}
+	next, err := fixedGateway(transport).SelectTimeSlot(t.Context(), current, "slot-1")
+	if err != nil || next.TimeSlotID != "slot-1" {
+		t.Fatalf("SelectTimeSlot() = %#v, %v", next, err)
+	}
+	if len(transport.params) != 1 {
+		t.Fatalf("transport calls = %d, want one read", len(transport.params))
+	}
+}
+
+func TestGatewaySelectTimeSlotReconcilesAnAmbiguousReservation(t *testing.T) {
+	transport := &scriptedBridgeTransport{t: t, calls: []scriptedBridgeCall{
+		{operation: browserbridge.OperationTimeslotsList, result: availableSlot},
+		{operation: browserbridge.OperationTimeslotReserve, err: codedStubError{code: "ambiguous_result"}},
+		{operation: browserbridge.OperationTimeslotsList, result: selectedSlot},
+	}}
+	current := shopping.ShoppingContext{StoreID: "660500", PostalCode: "10115"}
+	next, err := fixedGateway(transport).SelectTimeSlot(t.Context(), current, "slot-1")
+	if err != nil || next.TimeSlotID != "slot-1" {
+		t.Fatalf("SelectTimeSlot() = %#v, %v", next, err)
+	}
+	var params timeslotReserveParams
+	if err := json.Unmarshal(transport.params[1], &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.SlotID != "slot-1" || string(transport.params[1]) != `{"slot_id":"slot-1"}` {
+		t.Fatalf("reservation params = %#v", params)
+	}
+}
+
+func TestGatewaySelectTimeSlotReportsConfirmedFailure(t *testing.T) {
+	transport := &scriptedBridgeTransport{t: t, calls: []scriptedBridgeCall{
+		{operation: browserbridge.OperationTimeslotsList, result: availableSlot},
+		{operation: browserbridge.OperationTimeslotReserve, err: codedStubError{code: "upstream_changed"}},
+		{operation: browserbridge.OperationTimeslotsList, result: availableSlot},
+	}}
+	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{StoreID: "660500", PostalCode: "10115"}, "slot-1")
+	var upstreamErr *shopping.UpstreamChangeError
+	if !errors.As(err, &upstreamErr) {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if transport.calls != 0 {
-		t.Fatalf("transport called %d times, want 0", transport.calls)
-	}
 }
 
-func TestGatewaySelectTimeSlotSendsSlotIDOnlyAndRebindsContext(t *testing.T) {
-	transport := &capturingTransport{result: json.RawMessage(`{}`)}
-	shoppingContext := shopping.ShoppingContext{StoreID: "store-1", BasketID: "basket-1"}
-	next, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shoppingContext, "slot-1")
-	if err != nil {
-		t.Fatalf("SelectTimeSlot() error = %v", err)
-	}
-	if transport.gotOp != browserbridge.OperationTimeslotReserve {
-		t.Fatalf("operation = %q, want %q", transport.gotOp, browserbridge.OperationTimeslotReserve)
-	}
-	if string(transport.gotParams) != `{"slot_id":"slot-1"}` {
-		t.Fatalf("params = %s, want only slot_id (see gateway_basket.go: korb's real client sends no customerId)", transport.gotParams)
-	}
-	if next.TimeSlotID != "slot-1" || next.StoreID != "store-1" || next.BasketID != "basket-1" {
-		t.Fatalf("SelectTimeSlot() = %#v, want time slot bound and rest of context preserved", next)
-	}
-}
-
-func TestGatewaySelectTimeSlotClassifiesMutationBridgeError(t *testing.T) {
-	transport := &capturingTransport{err: codedStubError{code: "auth_invalid"}}
-	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{}, "slot-1")
-	var authErr *shopping.AuthError
-	if !errors.As(err, &authErr) {
+func TestGatewaySelectTimeSlotReportsUnknownWhenReconciliationFails(t *testing.T) {
+	transport := &scriptedBridgeTransport{t: t, calls: []scriptedBridgeCall{
+		{operation: browserbridge.OperationTimeslotsList, result: availableSlot},
+		{operation: browserbridge.OperationTimeslotReserve},
+		{operation: browserbridge.OperationTimeslotsList, err: codedStubError{code: "bridge_unavailable"}},
+	}}
+	_, err := fixedGateway(transport).SelectTimeSlot(t.Context(), shopping.ShoppingContext{StoreID: "660500", PostalCode: "10115"}, "slot-1")
+	var ambiguousErr *shopping.AmbiguousResultError
+	if !errors.As(err, &ambiguousErr) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

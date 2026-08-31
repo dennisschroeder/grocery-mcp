@@ -181,7 +181,8 @@ func TestBasketApplyToolReturnsPartialOutcomes(t *testing.T) {
 				t.Fatalf("unexpected changes: %#v", mutation.Changes)
 			}
 			return shopping.BasketMutationResult{
-				Basket: shopping.Basket{ID: "basket-1"},
+				Basket:     shopping.Basket{ID: "basket-1"},
+				Reconciled: true,
 				Outcomes: []shopping.BasketChangeOutcome{
 					{ProductID: "p1", RequestedQuantity: 2, AppliedQuantity: 2, Status: shopping.BasketChangeApplied},
 					{ProductID: "p2", RequestedQuantity: 0, AppliedQuantity: 0, Status: shopping.BasketChangeRejected, Problem: shopping.BasketProblemUnknown},
@@ -202,7 +203,7 @@ func TestBasketApplyToolReturnsPartialOutcomes(t *testing.T) {
 		t.Fatalf("basket_apply returned an error result: %+v", result.Content)
 	}
 	got := structuredContent[BasketApplyOutput](t, result)
-	if len(got.Outcomes) != 2 || got.Outcomes[1].Status != string(shopping.BasketChangeRejected) {
+	if !got.Reconciled || len(got.Outcomes) != 2 || got.Outcomes[1].Status != string(shopping.BasketChangeRejected) {
 		t.Fatalf("basket_apply outcomes = %#v", got.Outcomes)
 	}
 }

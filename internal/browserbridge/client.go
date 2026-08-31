@@ -29,6 +29,10 @@ func (c *Client) Do(ctx context.Context, op Operation, params json.RawMessage) (
 	if !op.allowlisted() {
 		return nil, &bridgeError{code: "operation_not_allowed"}
 	}
+	return c.call(ctx, op, params, true)
+}
+
+func (c *Client) call(ctx context.Context, op Operation, params json.RawMessage, browserOperation bool) (json.RawMessage, error) {
 	requestID, err := newRequestID()
 	if err != nil {
 		return nil, &bridgeError{code: "internal_error"}
@@ -38,7 +42,7 @@ func (c *Client) Do(ctx context.Context, op Operation, params json.RawMessage) (
 	if err != nil {
 		return nil, &bridgeError{code: "internal_error"}
 	}
-	if len(payload) == 0 || len(payload) > maxMessageBytes || !operationFrameFits(requestID, op, params) {
+	if len(payload) == 0 || len(payload) > maxMessageBytes || browserOperation && !operationFrameFits(requestID, op, params) {
 		return nil, &bridgeError{code: "invalid_params"}
 	}
 	connection, err := dialSocket(ctx, c.socketPath)
@@ -75,6 +79,23 @@ func (c *Client) Do(ctx context.Context, op Operation, params json.RawMessage) (
 		return nil, &bridgeError{code: safePeerErrorCode(response.Code)}
 	}
 	return response.Result, nil
+}
+
+func (c *Client) loadState(ctx context.Context, key string) (json.RawMessage, error) {
+	params, err := json.Marshal(sharedStateGetParams{Key: key})
+	if err != nil {
+		return nil, &bridgeError{code: "internal_error"}
+	}
+	return c.call(ctx, operationSharedStateGet, params, false)
+}
+
+func (c *Client) storeState(ctx context.Context, key string, value json.RawMessage) error {
+	params, err := json.Marshal(sharedStatePutParams{Key: key, Value: value})
+	if err != nil {
+		return &bridgeError{code: "internal_error"}
+	}
+	_, err = c.call(ctx, operationSharedStatePut, params, false)
+	return err
 }
 
 func (c *Client) cancel(requestID string) {

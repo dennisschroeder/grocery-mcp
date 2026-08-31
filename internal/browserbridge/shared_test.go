@@ -113,6 +113,72 @@ func TestFollowerTakesOwnershipAfterOwnerStops(t *testing.T) {
 	}
 }
 
+func TestSharedStateIsVisibleAcrossProcessesAndSurvivesFailover(t *testing.T) {
+	socketPath := shortSocketPath(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	first, err := OpenShared(ctx, socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenShared(ctx, socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	owner, follower := first, second
+	if second.currentOwner() != nil {
+		owner, follower = second, first
+	}
+	value := json.RawMessage(`{"store_id":"660500","basket_id":"basket-9"}`)
+	if err := owner.StoreState(ctx, "shopping:account-1", value); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := follower.LoadState(ctx, "shopping:account-1")
+	if err != nil || !found || string(got) != string(value) {
+		t.Fatalf("LoadState() = %s, %v, %v", got, found, err)
+	}
+
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err = follower.LoadState(ctx, "shopping:account-1")
+	if err != nil || !found || string(got) != string(value) {
+		t.Fatalf("LoadState() after failover = %s, %v, %v", got, found, err)
+	}
+	if follower.currentOwner() == nil {
+		t.Fatal("follower did not take ownership")
+	}
+}
+
+func TestSharedStateLockSerializesAccountMutations(t *testing.T) {
+	directory := t.TempDir()
+	first, err := lockSharedState(t.Context(), directory, "shopping:account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired := make(chan func(), 1)
+	go func() {
+		unlock, lockErr := lockSharedState(t.Context(), directory, "shopping:account")
+		if lockErr == nil {
+			acquired <- unlock
+		}
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("second mutation acquired account lock early")
+	case <-time.After(30 * time.Millisecond):
+	}
+	first()
+	select {
+	case unlock := <-acquired:
+		unlock()
+	case <-time.After(time.Second):
+		t.Fatal("second mutation did not acquire released account lock")
+	}
+}
+
 func TestElectionLoserWaitsForTheNewOwner(t *testing.T) {
 	socketPath := shortSocketPath(t)
 	ctx, cancel := context.WithCancel(t.Context())

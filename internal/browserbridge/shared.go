@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -56,6 +57,21 @@ func OpenShared(ctx context.Context, socketPath string) (*SharedTransport, error
 }
 
 func (t *SharedTransport) Do(ctx context.Context, op Operation, params json.RawMessage) (json.RawMessage, error) {
+	return t.route(ctx,
+		func(ctx context.Context, owner *sharedOwner) (json.RawMessage, error) {
+			return doWithOwnerContext(ctx, owner, op, params)
+		},
+		func(ctx context.Context) (json.RawMessage, error) {
+			return t.client.Do(ctx, op, params)
+		},
+	)
+}
+
+func (t *SharedTransport) route(
+	ctx context.Context,
+	ownerCall func(context.Context, *sharedOwner) (json.RawMessage, error),
+	peerCall func(context.Context) (json.RawMessage, error),
+) (json.RawMessage, error) {
 	callContext, cancel := context.WithCancel(ctx)
 	stopTransport := context.AfterFunc(t.ctx, cancel)
 	defer func() {
@@ -67,10 +83,10 @@ func (t *SharedTransport) Do(ctx context.Context, op Operation, params json.RawM
 	for {
 		owner := t.currentOwner()
 		if owner != nil {
-			return doWithOwnerContext(callContext, owner, op, params)
+			return ownerCall(callContext, owner)
 		}
 
-		result, err := t.client.Do(callContext, op, params)
+		result, err := peerCall(callContext)
 		if !retrySafeUnavailable(err) {
 			return result, err
 		}
@@ -83,7 +99,7 @@ func (t *SharedTransport) Do(ctx context.Context, op Operation, params json.RawM
 			if owner == nil {
 				return nil, &bridgeError{code: "bridge_unavailable"}
 			}
-			return doWithOwnerContext(callContext, owner, op, params)
+			return ownerCall(callContext, owner)
 		}
 		if time.Now().After(deadline) {
 			return nil, &bridgeError{code: "bridge_unavailable"}
@@ -95,6 +111,55 @@ func (t *SharedTransport) Do(ctx context.Context, op Operation, params json.RawM
 			return nil, &bridgeError{code: "bridge_unavailable"}
 		}
 	}
+}
+
+// LoadState and StoreState share small, account-scoped coordination values
+// between serve processes through the elected owner. The owner persists this
+// non-auth coordination state in its private runtime directory for failover.
+func (t *SharedTransport) LoadState(ctx context.Context, key string) (json.RawMessage, bool, error) {
+	params, err := json.Marshal(sharedStateGetParams{Key: key})
+	if err != nil {
+		return nil, false, &bridgeError{code: "internal_error"}
+	}
+	result, err := t.route(ctx,
+		func(_ context.Context, owner *sharedOwner) (json.RawMessage, error) {
+			return owner.server.doSharedState(operationSharedStateGet, params)
+		},
+		func(ctx context.Context) (json.RawMessage, error) {
+			return t.client.loadState(ctx, key)
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	var state sharedStateResult
+	if err := strictDecode(result, &state); err != nil {
+		return nil, false, &bridgeError{code: "ambiguous_result"}
+	}
+	return append(json.RawMessage(nil), state.Value...), state.Found, nil
+}
+
+func (t *SharedTransport) StoreState(ctx context.Context, key string, value json.RawMessage) error {
+	params, err := json.Marshal(sharedStatePutParams{Key: key, Value: value})
+	if err != nil {
+		return &bridgeError{code: "internal_error"}
+	}
+	_, err = t.route(ctx,
+		func(_ context.Context, owner *sharedOwner) (json.RawMessage, error) {
+			return owner.server.doSharedState(operationSharedStatePut, params)
+		},
+		func(ctx context.Context) (json.RawMessage, error) {
+			return nil, t.client.storeState(ctx, key, value)
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *SharedTransport) LockState(ctx context.Context, key string) (func(), error) {
+	return lockSharedState(ctx, filepath.Dir(t.socketPath), key)
 }
 
 func doWithOwnerContext(ctx context.Context, owner *sharedOwner, op Operation, params json.RawMessage) (json.RawMessage, error) {

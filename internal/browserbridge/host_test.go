@@ -22,10 +22,9 @@ func TestRunNativeHostRejectsOriginBeforeReadingInput(t *testing.T) {
 // queued operation once a server finally starts listening — all without the
 // caller (standing in for the Chrome port) ever seeing a disconnect.
 func TestNativeHostReconnectsAfterTheSocketComesBack(t *testing.T) {
-	originalInterval, originalBudget := reconnectRetryInterval, reconnectRetryBudget
+	originalInterval := reconnectRetryInterval
 	reconnectRetryInterval = 5 * time.Millisecond
-	reconnectRetryBudget = 2 * time.Second
-	t.Cleanup(func() { reconnectRetryInterval, reconnectRetryBudget = originalInterval, originalBudget })
+	t.Cleanup(func() { reconnectRetryInterval = originalInterval })
 
 	socketPath := shortSocketPath(t)
 	origin := "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
@@ -106,26 +105,66 @@ func TestNativeHostReconnectsAfterTheSocketComesBack(t *testing.T) {
 	}
 }
 
-// TestNativeHostGivesUpAfterTheRetryBudgetExpires proves a persistently
-// unreachable socket still eventually surfaces as an error (and process
-// exit) rather than retrying forever in silence.
-func TestNativeHostGivesUpAfterTheRetryBudgetExpires(t *testing.T) {
-	originalInterval, originalBudget := reconnectRetryInterval, reconnectRetryBudget
+func TestNativeHostKeepsRetryingUntilShutdown(t *testing.T) {
+	originalInterval := reconnectRetryInterval
 	reconnectRetryInterval = 5 * time.Millisecond
-	reconnectRetryBudget = 30 * time.Millisecond
-	t.Cleanup(func() { reconnectRetryInterval, reconnectRetryBudget = originalInterval, originalBudget })
+	t.Cleanup(func() { reconnectRetryInterval = originalInterval })
 
 	socketPath := shortSocketPath(t)
 	origin := "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	hostInput, chromeOutput := io.Pipe()
+	defer hostInput.Close()
+	defer chromeOutput.Close()
 
 	start := time.Now()
-	err := RunNativeHost(t.Context(), origin, origin, socketPath, bytes.NewReader(nil), io.Discard)
+	err := RunNativeHost(ctx, origin, origin, socketPath, hostInput, io.Discard)
 	elapsed := time.Since(start)
-	if err == nil {
-		t.Fatal("expected an error once the retry budget expired")
+	if err != nil {
+		t.Fatalf("native host returned an error on shutdown: %v", err)
 	}
-	if elapsed < reconnectRetryBudget {
-		t.Fatalf("gave up after %v, want at least the retry budget (%v)", elapsed, reconnectRetryBudget)
+	if elapsed < 40*time.Millisecond {
+		t.Fatalf("gave up after %v while Chrome's port was still open", elapsed)
+	}
+}
+
+func TestNativeHostStopsWhenChromeClosesDuringReconnect(t *testing.T) {
+	originalInterval := reconnectRetryInterval
+	reconnectRetryInterval = time.Second
+	t.Cleanup(func() { reconnectRetryInterval = originalInterval })
+
+	socketPath := shortSocketPath(t)
+	origin := "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
+	hostInput, chromeOutput := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- RunNativeHost(t.Context(), origin, origin, socketPath, hostInput, io.Discard)
+	}()
+	if err := chromeOutput.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("native host returned an error after Chrome closed: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("native host kept retrying after Chrome closed its port")
+	}
+}
+
+func TestRelayOperationKeepsChromePortOpenWhenOwnerDiesBeforeResultPost(t *testing.T) {
+	reply, err := EncodePortMessage(PortMessage{Type: "operation_response", RequestID: "request-1", OK: true, Result: json.RawMessage(`{"ok":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := make(chan portFrame, 1)
+	input <- portFrame{payload: reply}
+	closed, err := relayOperation(t.Context(), shortSocketPath(t), input, io.Discard, &PollResponse{RequestID: "request-1", Operation: OperationSessionIdentity})
+	if err != nil || closed {
+		t.Fatalf("relayOperation() = closed %v, err %v", closed, err)
 	}
 }
 

@@ -3,6 +3,7 @@
     "available": true,
     "endTime": "2026-08-20T09:00:00+02:00",
     "id": "timeslot-1",
+    "selected": false,
     "serviceFee": 0,
     "startTime": "2026-08-20T08:00:00+02:00"
   }
