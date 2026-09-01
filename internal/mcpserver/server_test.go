@@ -69,6 +69,14 @@ func TestAuthToolsAreReachableThroughMCP(t *testing.T) {
 	}
 }
 
+func TestReauthStatusExplainsAutomaticValidation(t *testing.T) {
+	output := statusOutput(shopping.AuthStatus{State: shopping.AuthReauthRequired, ActionRequired: true})
+	want := "Log into REWE in the connected Chrome tab; grocery-mcp will validate the session automatically. If the extension is disconnected, click it once."
+	if output.Instruction != want {
+		t.Fatalf("instruction = %q, want %q", output.Instruction, want)
+	}
+}
+
 func TestAuthToolAnnotationsAreExplicit(t *testing.T) {
 	server := New(shopping.NewCore(auth.NewService(nil), nil, nil, nil, nil))
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -107,6 +115,9 @@ func TestAuthToolAnnotationsAreExplicit(t *testing.T) {
 		}
 		switch tool.Name {
 		case "auth_connect":
+			if tool.Description != "Begin browser-assisted REWE authentication. Follow the returned instruction when human action is required." {
+				t.Fatalf("unexpected auth_connect description: %q", tool.Description)
+			}
 			if readOnly || destructive || !openWorld {
 				t.Fatalf("unexpected auth_connect annotations: %#v", tool.Annotations)
 			}

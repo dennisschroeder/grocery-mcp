@@ -110,7 +110,7 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
 | State | `action_required` | `instruction` |
 |---|---|---|
 | `Bootstrapping` / prolonged `Validating` | true | "Click the grocery-mcp extension in signed-in Chrome." |
-| `ReauthRequired` | true | "Log into REWE in Chrome, then click the grocery-mcp extension." |
+| `ReauthRequired` | true | Log into REWE in the connected Chrome tab; validation retries automatically. Click the extension only if its port is disconnected. |
 | `Active` | false | (empty) |
 
 Confirmed live (2026-08-19): signing out of REWE and attempting an
@@ -119,6 +119,13 @@ state to `ReauthRequired` in ~70ms — not a hang, not misclassified as a
 generic failure. No password, 2FA, or CAPTCHA ever passes through the
 extension; the human always completes REWE login in their own browser tab
 first.
+
+As of the 2026-09-01 reauthentication recovery, the validator retries at most
+once every five seconds while the user is logged out. A later browser login is
+therefore detected through the existing Native Messaging port without another
+`auth_connect` call. `auth_status` remains stably `ReauthRequired` during those
+background validation attempts instead of briefly presenting the wrong click
+instruction.
 
 A full MCP-server process restart loses its memory-only Auth service and
 `ShopSessionID`, but not Chrome's native port. Every new process starts

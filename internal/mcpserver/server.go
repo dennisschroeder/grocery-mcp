@@ -28,7 +28,7 @@ func New(core *shopping.Core) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "auth_connect",
-		Description: "Begin browser-assisted REWE authentication. When action_required is true, the human clicks the grocery-mcp Chrome extension.",
+		Description: "Begin browser-assisted REWE authentication. Follow the returned instruction when human action is required.",
 		Annotations: annotations(false, false, true),
 	}, func(context.Context, *mcp.CallToolRequest, EmptyInput) (*mcp.CallToolResult, AuthStatus, error) {
 		return nil, statusOutput(core.AuthConnect()), nil
@@ -63,7 +63,7 @@ func statusOutput(status shopping.AuthStatus) AuthStatus {
 	if status.ActionRequired {
 		switch status.State {
 		case shopping.AuthReauthRequired:
-			instruction = "Log into REWE in Chrome, then click the grocery-mcp extension."
+			instruction = "Log into REWE in the connected Chrome tab; grocery-mcp will validate the session automatically. If the extension is disconnected, click it once."
 		default:
 			instruction = "Click the grocery-mcp extension in signed-in Chrome."
 		}

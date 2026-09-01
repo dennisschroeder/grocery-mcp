@@ -47,8 +47,9 @@ The human acts only when `action_required` is true:
   permission (no cookie permission is ever requested);
 - once to establish the Chrome Native Messaging port after Chrome or the
   extension starts;
-- after `ReauthRequired`, to log into REWE normally. Another extension click
-  is needed only if Chrome's native port is no longer connected.
+- after `ReauthRequired`, to log into REWE normally. Validation resumes
+  automatically through the existing port; another extension click is needed
+  only if Chrome's native port is no longer connected.
 
 There is no password, 2FA, CAPTCHA, checkout, or payment entry in the
 extension. MCP-server restarts lose their local auth object, but the native
