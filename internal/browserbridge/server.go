@@ -516,7 +516,7 @@ func validRequestID(requestID string) bool {
 // generated locally around dispatch when no poll, slot, or response arrives.
 func safeErrorCode(code string) string {
 	switch code {
-	case "not_implemented", "auth_invalid", "rate_limited", "upstream_changed", "malformed_response", "unknown_operation", "invalid_params", "content_script_unreachable", "not_dispatched", "queue_busy", "operation_timeout":
+	case "not_implemented", "auth_invalid", "rate_limited", "upstream_changed", "malformed_response", "unknown_operation", "invalid_params", "content_script_unreachable", "not_dispatched", "queue_busy", "operation_timeout", "ambiguous_result":
 		return code
 	default:
 		return "operation_failed"

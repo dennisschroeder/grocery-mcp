@@ -75,7 +75,9 @@ Example for a client using a `command`/`args` config shape:
 }
 ```
 
-Then call `auth_connect` and click the extension when prompted.
+Check `auth_status`. Each MCP process validates automatically through an
+already-connected extension. Call `auth_connect` only to request an explicit
+retry; click the extension only when `action_required` is true.
 
 ## Documents
 

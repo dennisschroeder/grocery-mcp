@@ -64,7 +64,7 @@ func serveMCPAt(socketPath string) error {
 
 	service := auth.NewService(rewe.BrowserValidator{Transport: bridge})
 	defer service.Disconnect()
-	authenticator := newAutoAcceptingAuthenticator(ctx, service)
+	authenticator := startAutoAcceptingAuthenticator(ctx, service)
 
 	gateway := rewe.Gateway{Transport: bridge}
 	checkoutGate := checkout.NewGate()

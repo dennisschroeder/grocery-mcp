@@ -310,6 +310,12 @@ func TestDoMapsAnUnrecognizedFailureCodeToTheSafeFallback(t *testing.T) {
 	}
 }
 
+func TestSafeErrorCodePreservesAmbiguousMutationResult(t *testing.T) {
+	if got := safeErrorCode("ambiguous_result"); got != "ambiguous_result" {
+		t.Fatalf("safeErrorCode(ambiguous_result) = %q", got)
+	}
+}
+
 // TestConcurrentDoCallersEachGetTheirOwnResult proves multiple simultaneous
 // MCP tool calls (each becoming its own Do() call) never cross-wire —
 // caller A never receives caller B's result. The native host's own poll

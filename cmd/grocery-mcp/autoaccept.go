@@ -54,8 +54,18 @@ func newAutoAcceptingAuthenticator(ctx context.Context, service *auth.Service) *
 	}
 }
 
+func startAutoAcceptingAuthenticator(ctx context.Context, service *auth.Service) *autoAcceptingAuthenticator {
+	authenticator := newAutoAcceptingAuthenticator(ctx, service)
+	authenticator.Connect()
+	return authenticator
+}
+
 func (a *autoAcceptingAuthenticator) Connect() shopping.AuthStatus {
-	a.service.Connect()
+	if a.service.Status().State == shopping.AuthActive {
+		a.service.Refresh()
+	} else {
+		a.service.Connect()
+	}
 	a.driveAcceptOnce()
 	return a.Status()
 }
@@ -63,13 +73,9 @@ func (a *autoAcceptingAuthenticator) Connect() shopping.AuthStatus {
 func (a *autoAcceptingAuthenticator) Status() shopping.AuthStatus {
 	status := a.service.Status()
 	a.mu.Lock()
-	running := a.running
 	needsAction := a.needsAction
 	a.mu.Unlock()
 	status.ActionRequired = status.State == shopping.AuthReauthRequired || needsAction
-	if running {
-		status.ActionRequired = false
-	}
 	return status
 }
 
@@ -109,7 +115,7 @@ func (a *autoAcceptingAuthenticator) driveAcceptOnce() {
 	status := a.service.Status()
 	a.mu.Lock()
 	if a.running {
-		if status.State == shopping.AuthBootstrapping {
+		if status.State == shopping.AuthBootstrapping || status.State == shopping.AuthRefreshing {
 			a.restartPending = true
 		}
 		a.mu.Unlock()
@@ -134,7 +140,10 @@ func (a *autoAcceptingAuthenticator) runAcceptDriver(driverContext context.Conte
 
 		a.mu.Lock()
 		state := a.service.Status().State
-		if a.restartPending && state == shopping.AuthBootstrapping && driverContext.Err() == nil {
+		if state == shopping.AuthActive {
+			a.needsAction = false
+		}
+		if a.restartPending && (state == shopping.AuthBootstrapping || state == shopping.AuthRefreshing) && driverContext.Err() == nil {
 			a.restartPending = false
 			a.needsAction = false
 			a.generation++
@@ -181,7 +190,6 @@ func (a *autoAcceptingAuthenticator) runAcceptGeneration(driverContext context.C
 				a.needsAction = true
 			}
 			a.mu.Unlock()
-			return
 		}
 		timer := time.NewTimer(a.retryInterval)
 		select {

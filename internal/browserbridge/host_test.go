@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -155,6 +156,25 @@ func TestNativeHostStopsWhenChromeClosesDuringReconnect(t *testing.T) {
 	}
 }
 
+func TestReconnectWaitDiscardsALateOperationResponse(t *testing.T) {
+	payload, err := EncodePortMessage(PortMessage{
+		Type:      "operation_response",
+		RequestID: "request-1",
+		OK:        true,
+		Result:    json.RawMessage(`{"late":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := make(chan portFrame, 1)
+	input <- portFrame{payload: payload}
+
+	closed, err := waitForRetry(t.Context(), time.Second, input)
+	if err != nil || closed {
+		t.Fatalf("waitForRetry() = closed %v, err %v", closed, err)
+	}
+}
+
 func TestRelayOperationKeepsChromePortOpenWhenOwnerDiesBeforeResultPost(t *testing.T) {
 	reply, err := EncodePortMessage(PortMessage{Type: "operation_response", RequestID: "request-1", OK: true, Result: json.RawMessage(`{"ok":true}`)})
 	if err != nil {
@@ -165,6 +185,99 @@ func TestRelayOperationKeepsChromePortOpenWhenOwnerDiesBeforeResultPost(t *testi
 	closed, err := relayOperation(t.Context(), shortSocketPath(t), input, io.Discard, &PollResponse{RequestID: "request-1", Operation: OperationSessionIdentity})
 	if err != nil || closed {
 		t.Fatalf("relayOperation() = closed %v, err %v", closed, err)
+	}
+}
+
+func TestNativeHostSurvivesTimedOutOperationAndDiscardsItsLateResponse(t *testing.T) {
+	originalTimeout := operationResponseTimeout
+	operationResponseTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { operationResponseTimeout = originalTimeout })
+
+	socketPath := shortSocketPath(t)
+	server, err := Listen(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.pollTimeout = 50 * time.Millisecond
+	server.dispatchTimeout = 100 * time.Millisecond
+	server.operationTimeout = 100 * time.Millisecond
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	serveInBackground(t, server, ctx)
+
+	hostInput, chromeOutput := io.Pipe()
+	chromeInput, hostOutput := io.Pipe()
+	origin := "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
+	hostDone := make(chan error, 1)
+	go func() {
+		hostDone <- RunNativeHost(ctx, origin, origin, socketPath, hostInput, hostOutput)
+	}()
+
+	extensionDone := make(chan error, 1)
+	go func() {
+		firstPayload, err := ReadFrame(chromeInput)
+		if err != nil {
+			extensionDone <- err
+			return
+		}
+		first, err := DecodePortMessage(firstPayload)
+		if err != nil {
+			extensionDone <- err
+			return
+		}
+		time.Sleep(40 * time.Millisecond)
+		late, _ := EncodePortMessage(PortMessage{Type: "operation_response", RequestID: first.RequestID, OK: true, Result: json.RawMessage(`{"late":true}`)})
+		if err := WriteFrame(chromeOutput, late); err != nil {
+			extensionDone <- err
+			return
+		}
+
+		secondPayload, err := ReadFrame(chromeInput)
+		if err != nil {
+			extensionDone <- err
+			return
+		}
+		second, err := DecodePortMessage(secondPayload)
+		if err != nil {
+			extensionDone <- err
+			return
+		}
+		reply, _ := EncodePortMessage(PortMessage{Type: "operation_response", RequestID: second.RequestID, OK: true, Result: json.RawMessage(`{"ok":true}`)})
+		extensionDone <- WriteFrame(chromeOutput, reply)
+	}()
+
+	_, err = server.Do(ctx, OperationBasketApply, json.RawMessage(`{"changes":[{"listing_id":"item-1","quantity":1}]}`))
+	var coded CodedError
+	if !errors.As(err, &coded) || coded.Code() != "operation_timeout" {
+		t.Fatalf("timed-out operation error = %v, want operation_timeout", err)
+	}
+
+	select {
+	case err := <-hostDone:
+		t.Fatalf("native host exited after one slow operation: %v", err)
+	default:
+	}
+
+	result, err := server.Do(ctx, OperationSessionIdentity, nil)
+	if err != nil {
+		t.Fatalf("operation after timeout failed: %v", err)
+	}
+	if string(result) != `{"ok":true}` {
+		t.Fatalf("operation after timeout result = %s", result)
+	}
+	if err := <-extensionDone; err != nil {
+		t.Fatal(err)
+	}
+
+	cancel()
+	select {
+	case err := <-hostDone:
+		if err != nil {
+			t.Fatalf("native host shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("native host did not stop")
 	}
 }
 
