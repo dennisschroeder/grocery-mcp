@@ -24,7 +24,7 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
   names, and distances — no more manual DevTools workaround needed.
 - Bridge-socket restart: the native host waits without a retry deadline while
   Chrome's port remains open and reconnects when a new owner starts. A new
-  process validates automatically before `auth_connect` asks for a click.
+  process starts validation automatically before `auth_connect` asks for a click.
   Individual validation attempts time out and retry, so a lost bridge response
   cannot leave one MCP process permanently stuck in `Validating`.
 - Tab close/reopen: closing the REWE tab and re-clicking the extension
@@ -41,6 +41,15 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
   body of `{slotId}` only, no `customerId`/`wwIdent`/`zipCode` — see below.
 
 ## Known limitations
+
+- **The 2026-09-01 session-stability fix still needs a live release round.**
+  Regression tests now prove that a timed-out browser operation reports
+  `operation_timeout`, keeps the Native Messaging port alive, discards its
+  eventual late response by request ID, and successfully executes the next
+  operation. A separate extension regression bounds an unresponsive content
+  script at 30 seconds. The remaining acceptance gate is a real installed
+  build performing a slow/failed basket mutation followed by `basket_get`
+  without another extension click.
 
 - **Listing discovery depends on recent tab activity.**
   `basket_listings_get` returns an empty list when the tab's resource timing
@@ -112,8 +121,9 @@ extension; the human always completes REWE login in their own browser tab
 first.
 
 A full MCP-server process restart loses its memory-only Auth service and
-`ShopSessionID`, but not Chrome's native port. `auth_connect` first waits for
-automatic validation through that existing port; only an absent port produces
-the click instruction. Account-scoped Store/Basket/Timeslot identifiers are
-persisted separately in the private bridge runtime directory and contain no
-authentication material.
+`ShopSessionID`, but not Chrome's native port. Every new process starts
+automatic validation through that existing port and keeps retrying while an
+absent port produces the click instruction. Clicking the extension is enough
+for a waiting process to recover; a second `auth_connect` call is unnecessary.
+Account-scoped Store/Basket/Timeslot identifiers are persisted separately in
+the private bridge runtime directory and contain no authentication material.

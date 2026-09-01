@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dennisschroeder/grocery-mcp/internal/auth"
+	"github.com/dennisschroeder/grocery-mcp/internal/browserbridge"
 	"github.com/dennisschroeder/grocery-mcp/internal/shopping"
 )
 
@@ -46,6 +47,15 @@ func TestConnectDrivesAcceptWithoutAnExternalCaller(t *testing.T) {
 	waitForState(t, service, auth.StateActive)
 }
 
+func TestLiveAuthenticatorStartsValidationWithoutAnAuthConnectCall(t *testing.T) {
+	observedAt := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	service := auth.NewService(stubValidator{identity: shopping.SessionIdentity{AccountID: "account", ObservedAt: observedAt}})
+
+	startAutoAcceptingAuthenticator(t.Context(), service)
+
+	waitForState(t, service, auth.StateActive)
+}
+
 func TestConnectDoesNotRequestActionWhileAutomaticValidationIsRunning(t *testing.T) {
 	started := make(chan struct{})
 	service := auth.NewService(validatorFunc(func(ctx context.Context) (shopping.SessionIdentity, error) {
@@ -59,6 +69,54 @@ func TestConnectDoesNotRequestActionWhileAutomaticValidationIsRunning(t *testing
 		t.Fatalf("automatic validation requested premature human action: %#v", status)
 	}
 	<-started
+}
+
+func TestConnectRevalidatesAnActiveSession(t *testing.T) {
+	observedAt := time.Date(2026, 9, 1, 9, 30, 0, 0, time.UTC)
+	secondStarted := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	var attempts atomic.Int32
+	service := auth.NewService(validatorFunc(func(context.Context) (shopping.SessionIdentity, error) {
+		if attempts.Add(1) == 2 {
+			close(secondStarted)
+			<-releaseSecond
+		}
+		return shopping.SessionIdentity{AccountID: "account", ObservedAt: observedAt}, nil
+	}))
+	authenticator := newAutoAcceptingAuthenticator(t.Context(), service)
+	authenticator.Connect()
+	waitForState(t, service, auth.StateActive)
+
+	if status := authenticator.Connect(); status.State != shopping.AuthRefreshing {
+		t.Fatalf("Connect() on Active = %#v, want Refreshing", status)
+	}
+	<-secondStarted
+	close(releaseSecond)
+	waitForState(t, service, auth.StateActive)
+	if attempts.Load() != 2 {
+		t.Fatalf("validation attempts = %d, want 2", attempts.Load())
+	}
+}
+
+func TestConnectQueuesRefreshWhileTheSuccessfulDriverIsExiting(t *testing.T) {
+	observedAt := time.Date(2026, 9, 1, 9, 45, 0, 0, time.UTC)
+	service := auth.NewService(stubValidator{identity: shopping.SessionIdentity{AccountID: "account", ObservedAt: observedAt}})
+	service.Connect()
+	if err := service.Accept(t.Context(), browserbridge.NewTabBinding(observedAt)); err != nil {
+		t.Fatal(err)
+	}
+	authenticator := newAutoAcceptingAuthenticator(t.Context(), service)
+	authenticator.running = true
+
+	if status := authenticator.Connect(); status.State != shopping.AuthRefreshing {
+		t.Fatalf("Connect() = %#v, want Refreshing", status)
+	}
+	authenticator.mu.Lock()
+	restartPending := authenticator.restartPending
+	authenticator.mu.Unlock()
+	if !restartPending {
+		t.Fatal("refresh was lost while the previous driver was exiting")
+	}
 }
 
 func TestConnectDrivesAcceptOnceReconnectRetries(t *testing.T) {
@@ -160,6 +218,33 @@ func TestMissingBridgeRequestsHumanAction(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
+}
+
+func TestMissingBridgeRecoversWithoutAnotherConnectCall(t *testing.T) {
+	observedAt := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	var available atomic.Bool
+	service := auth.NewService(validatorFunc(func(context.Context) (shopping.SessionIdentity, error) {
+		if !available.Load() {
+			return shopping.SessionIdentity{}, &shopping.BridgeUnavailableError{Operation: "validate session", ActionRequired: true}
+		}
+		return shopping.SessionIdentity{AccountID: "account", ObservedAt: observedAt}, nil
+	}))
+	authenticator := newAutoAcceptingAuthenticator(t.Context(), service)
+	authenticator.retryInterval = time.Millisecond
+	authenticator.actionDelay = 0
+
+	authenticator.Connect()
+	deadline := time.After(2 * time.Second)
+	for !authenticator.Status().ActionRequired {
+		select {
+		case <-deadline:
+			t.Fatalf("missing bridge did not request human action: %#v", authenticator.Status())
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	available.Store(true)
+	waitForState(t, service, auth.StateActive)
 }
 
 func TestDisconnectWaitsForDriverBeforeReconnect(t *testing.T) {

@@ -1,5 +1,7 @@
 const HOST_NAME = "com.dennisschroeder.grocery_mcp";
 const REWE_ORIGINS = ["https://www.rewe.de/*"];
+const CONTENT_SCRIPT_RESPONSE_TIMEOUT_MS = 30_000;
+const MUTATING_OPERATIONS = new Set(["basket_apply", "timeslot_reserve"]);
 
 async function setBadge(text, color) {
   await chrome.action.setBadgeBackgroundColor({ color });
@@ -11,6 +13,7 @@ const SAFE_ERROR_CODES = new Set([
   "shop_reload_failed",
   "native_host_error",
   "content_script_unreachable",
+  "operation_timeout",
 ]);
 
 function safeErrorCode(error) {
@@ -93,15 +96,35 @@ let nativePort = null;
 // redirect re-injecting the script on a second document. Retried rather
 // than guessed at REWE's exact redirect timing.
 async function sendToContentScript(tabId, message) {
-  const attempts = 3;
+  // A rejected response channel does not prove whether a mutation reached
+  // REWE. Reads may retry; mutations must surface the ambiguity once.
+  const attempts = MUTATING_OPERATIONS.has(message?.operation) ? 1 : 3;
   const retryDelayMs = 300;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      return await chrome.tabs.sendMessage(tabId, message);
+      return await withTimeout(
+        chrome.tabs.sendMessage(tabId, message),
+        CONTENT_SCRIPT_RESPONSE_TIMEOUT_MS,
+      );
     } catch (error) {
+      if (error?.message === "operation_timeout") throw error;
       if (attempt === attempts) throw error;
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
+  }
+}
+
+async function withTimeout(promise, timeoutMs) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("operation_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -115,8 +138,11 @@ function bindPort(port, tabId) {
     let response;
     try {
       response = await sendToContentScript(tabId, { operation, params });
-    } catch {
-      response = { ok: false, code: "content_script_unreachable" };
+    } catch (error) {
+      response = {
+        ok: false,
+        code: error?.message === "operation_timeout" ? "operation_timeout" : "content_script_unreachable",
+      };
     }
 
     port.postMessage({

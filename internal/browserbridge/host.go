@@ -16,7 +16,12 @@ const (
 )
 
 // Overridable by tests, matching Server.pollTimeout's pattern.
-var reconnectRetryInterval = 2 * time.Second
+var (
+	reconnectRetryInterval   = 2 * time.Second
+	operationResponseTimeout = nativeHostResponseTimeout
+)
+
+var errOperationResponseTimeout = errors.New("timed out waiting for operation response")
 
 // RunNativeHost drives the poll loop for as long as the Chrome port (input,
 // output) stays open: dial the socket, poll, and on a queued operation relay
@@ -54,7 +59,13 @@ func RunNativeHost(ctx context.Context, origin, allowedOrigin, socketPath string
 				if errors.Is(frame.err, io.EOF) {
 					return nil
 				}
-				return fmt.Errorf("unexpected operation response while idle")
+				if frame.err != nil {
+					return frame.err
+				}
+				message, decodeErr := DecodePortMessage(frame.payload)
+				if decodeErr != nil || message.Type != "operation_response" {
+					return fmt.Errorf("unexpected operation response while idle")
+				}
 			default:
 			}
 			continue
@@ -102,7 +113,11 @@ func waitForRetry(ctx context.Context, delay time.Duration, portInput <-chan por
 		if frame.err != nil {
 			return false, frame.err
 		}
-		return false, fmt.Errorf("unexpected operation response while bridge is unavailable")
+		message, err := DecodePortMessage(frame.payload)
+		if err != nil || message.Type != "operation_response" {
+			return false, fmt.Errorf("unexpected operation response while bridge is unavailable")
+		}
+		return false, nil
 	case <-ctx.Done():
 		return true, nil
 	}
@@ -161,19 +176,37 @@ func relayOperation(ctx context.Context, socketPath string, input <-chan portFra
 		return false, fmt.Errorf("write operation request: %w", err)
 	}
 
-	replyPayload, err := readFrameWithTimeout(ctx, input, nativeHostResponseTimeout)
-	if errors.Is(err, io.EOF) {
-		return true, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read operation response: %w", err)
-	}
-	reply, err := DecodePortMessage(replyPayload)
-	if err != nil {
-		return false, err
-	}
-	if reply.Type != "operation_response" || reply.RequestID != poll.RequestID {
-		return false, fmt.Errorf("operation response does not match the pending request")
+	deadline := time.Now().Add(operationResponseTimeout)
+	var reply *PortMessage
+	for {
+		replyPayload, readErr := readFrameWithTimeout(ctx, input, time.Until(deadline))
+		if errors.Is(readErr, io.EOF) {
+			return true, nil
+		}
+		if errors.Is(readErr, errOperationResponseTimeout) {
+			err = postResult(ctx, socketPath, PollRequest{
+				Type:      "result",
+				RequestID: poll.RequestID,
+				Code:      "operation_timeout",
+			})
+			if err != nil && ctx.Err() == nil {
+				return false, nil
+			}
+			return false, err
+		}
+		if readErr != nil {
+			return false, fmt.Errorf("read operation response: %w", readErr)
+		}
+		reply, err = DecodePortMessage(replyPayload)
+		if err != nil {
+			return false, err
+		}
+		if reply.Type != "operation_response" {
+			return false, fmt.Errorf("operation response does not match the pending request")
+		}
+		if reply.RequestID == poll.RequestID {
+			break
+		}
 	}
 
 	err = postResult(ctx, socketPath, PollRequest{
@@ -236,6 +269,6 @@ func readFrameWithTimeout(ctx context.Context, input <-chan portFrame, timeout t
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-timer.C:
-		return nil, fmt.Errorf("timed out waiting for operation response")
+		return nil, errOperationResponseTimeout
 	}
 }
