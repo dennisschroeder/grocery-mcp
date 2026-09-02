@@ -42,13 +42,17 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
 
 ## Known limitations
 
-- **The automatic Native Host reconnect still needs live acceptance with a
-  released build.** The v0.5.3 diagnosis on 2026-09-02 reproduced the Native
-  Host disconnect. Regression tests cover
-  automatic Native Host reconnect after the initial human permission/click:
-  the extension uses a short retry plus Chrome alarm watchdog, reuses an
-  existing REWE shop tab without requesting permission and without
-  reloading/creating a tab, and never replays operations.
+- **Reads can fail transiently during the short reconnect window.** v0.5.4
+  was accepted live on 2026-09-02: Native Host PID 9277 restarted as PID 9616
+  in ~3s, then PID 9616 restarted as PID 9684 in ~5s, without an extension
+  click; auth stayed `Active` at revision 1 and `basket_listings_get` succeeded
+  after both recoveries. One read during the first transition returned
+  `browser bridge is unavailable`, and an immediate serial retry succeeded.
+  Reads may be retried after this transient failure; mutations must never be
+  blindly retried because their browser-side outcome may be ambiguous. The
+  v0.5.4 implementation uses a short retry plus Chrome alarm watchdog, reuses
+  an existing REWE shop tab, does not request permission, reload or create a
+  tab, and does not replay operations.
   Regression tests now prove that a timed-out browser operation reports
   `operation_timeout`, keeps the Native Messaging port alive, discards its
   eventual late response by request ID, and successfully executes the next
