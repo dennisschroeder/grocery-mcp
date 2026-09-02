@@ -162,9 +162,8 @@ those are public store identifiers, not account data).
 
 ## Acceptance record
 
-Status: **outcome C proven live — accepted 2026-08-18; live v0.5.3 diagnosis
-2026-09-02 identified the Native Host disconnect. Automatic reconnect is
-regression-tested but still needs acceptance with a released build; see
+Status: **outcome C proven live — accepted 2026-08-18; v0.5.4 reconnect
+accepted live 2026-09-02; see
 [`known-limitations.md`](known-limitations.md) for the current, full picture
 after card #10's 2026-08-19 live-testing rounds** (restart/reconnect
 resilience, tab close/reopen, logged-out fail-closed behavior, and which
@@ -177,5 +176,11 @@ operations are actually confirmed working against real REWE traffic today).
 - `products_search` (`GET /shop/api/products`) succeeded once against a live
   search term and market ID: 15518 bytes of well-formed search results
   (products, facets, pagination).
+- v0.5.4 live reconnect acceptance: Native Host PID 9277 was killed and
+  automatically restarted as PID 9616 in ~3s; PID 9616 was then killed and
+  restarted as PID 9684 in ~5s. No extension click was needed, auth stayed
+  `Active` at revision 1, and `basket_listings_get` succeeded after both
+  recoveries. One read during the first transition returned
+  `browser bridge is unavailable`; an immediate serial retry succeeded.
 - No credential values, account data, response bodies, or browser captures
   were logged or persisted at any point.
