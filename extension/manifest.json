@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "grocery-mcp Browser Bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Runs REWE session operations inside the signed-in REWE tab via a content script and relays only structured JSON results to a local grocery-mcp process.",
-  "permissions": ["nativeMessaging"],
+  "permissions": ["nativeMessaging", "alarms"],
   "optional_host_permissions": ["https://www.rewe.de/*"],
   "content_scripts": [
     {

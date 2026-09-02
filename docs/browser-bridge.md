@@ -46,10 +46,13 @@ The human acts only when `action_required` is true:
 - once to install the unpacked extension and approve its REWE-only host
   permission (no cookie permission is ever requested);
 - once to establish the Chrome Native Messaging port after Chrome or the
-  extension starts;
+  extension starts. After that initial permission/click, a disconnected
+  Native Host recovers automatically with a short retry and a Chrome alarm
+  watchdog;
 - after `ReauthRequired`, to log into REWE normally. Validation resumes
-  automatically through the existing port; another extension click is needed
-  only if Chrome's native port is no longer connected.
+  automatically through the existing port. Background reconnect uses an
+  existing REWE shop tab, never requests permission, never reloads or creates
+  a tab, and does not replay operations.
 
 There is no password, 2FA, CAPTCHA, checkout, or payment entry in the
 extension. MCP-server restarts lose their local auth object, but the native
@@ -159,7 +162,9 @@ those are public store identifiers, not account data).
 
 ## Acceptance record
 
-Status: **outcome C proven live — accepted 2026-08-18; see
+Status: **outcome C proven live — accepted 2026-08-18; live v0.5.3 diagnosis
+2026-09-02 identified the Native Host disconnect. Automatic reconnect is
+regression-tested but still needs acceptance with a released build; see
 [`known-limitations.md`](known-limitations.md) for the current, full picture
 after card #10's 2026-08-19 live-testing rounds** (restart/reconnect
 resilience, tab close/reopen, logged-out fail-closed behavior, and which

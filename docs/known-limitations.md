@@ -1,6 +1,6 @@
 # Known limitations and reauthentication UX
 
-Phase 1 status as of 2026-08-31, including the multi-process reconciliation
+Phase 1 status as of 2026-09-02, including the multi-process reconciliation
 iteration and earlier live-testing rounds
 against a real, signed-in REWE account. Supersedes the acceptance record in
 [`browser-bridge.md`](browser-bridge.md), which only covers card #13's
@@ -42,7 +42,13 @@ against a real, signed-in REWE account. Supersedes the acceptance record in
 
 ## Known limitations
 
-- **The 2026-09-01 session-stability fix still needs a live release round.**
+- **The automatic Native Host reconnect still needs live acceptance with a
+  released build.** The v0.5.3 diagnosis on 2026-09-02 reproduced the Native
+  Host disconnect. Regression tests cover
+  automatic Native Host reconnect after the initial human permission/click:
+  the extension uses a short retry plus Chrome alarm watchdog, reuses an
+  existing REWE shop tab without requesting permission and without
+  reloading/creating a tab, and never replays operations.
   Regression tests now prove that a timed-out browser operation reports
   `operation_timeout`, keeps the Native Messaging port alive, discards its
   eventual late response by request ID, and successfully executes the next

@@ -2,6 +2,9 @@ const HOST_NAME = "com.dennisschroeder.grocery_mcp";
 const REWE_ORIGINS = ["https://www.rewe.de/*"];
 const CONTENT_SCRIPT_RESPONSE_TIMEOUT_MS = 30_000;
 const MUTATING_OPERATIONS = new Set(["basket_apply", "timeslot_reserve"]);
+const RECONNECT_ALARM = "native-host-reconnect";
+const RECONNECT_DELAY_MS = 1_000;
+const RECONNECT_WATCHDOG_MINUTES = 0.5;
 
 async function setBadge(text, color) {
   await chrome.action.setBadgeBackgroundColor({ color });
@@ -87,6 +90,10 @@ async function authenticatedShopTab() {
 // must not clobber a newer one, so handlers below re-check identity against
 // this variable before acting.
 let nativePort = null;
+let reconnectTimer = null;
+let reconnecting = false;
+let manualConnectPromise = null;
+let manualConnectGeneration = 0;
 
 // A freshly created tab's "complete" status (waitForNavigation) doesn't
 // guarantee the content script has finished registering its message
@@ -161,17 +168,74 @@ function bindPort(port, tabId) {
   port.onDisconnect.addListener(async () => {
     if (nativePort !== port) return;
     nativePort = null;
+    scheduleReconnect();
     await setErrorBadge("native_host_error");
   });
 }
 
+function scheduleReconnect() {
+  armReconnectWatchdog();
+  if (reconnectTimer !== null) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectNativeHost();
+  }, RECONNECT_DELAY_MS);
+}
+
+function armReconnectWatchdog() {
+  chrome.alarms.create(RECONNECT_ALARM, {
+    delayInMinutes: RECONNECT_WATCHDOG_MINUTES,
+    periodInMinutes: RECONNECT_WATCHDOG_MINUTES,
+  });
+}
+
+function replaceNativePort(port, tabId) {
+  const previousPort = nativePort;
+  nativePort = null;
+  if (previousPort) previousPort.disconnect();
+  bindPort(port, tabId);
+}
+
+async function reconnectNativeHost() {
+  if (nativePort || reconnecting || manualConnectPromise) return;
+  const generation = manualConnectGeneration;
+  reconnecting = true;
+  try {
+    const granted = await chrome.permissions.contains({ origins: REWE_ORIGINS });
+    if (!granted) return;
+    if (nativePort || manualConnectPromise || generation !== manualConnectGeneration) return;
+    const tabs = await chrome.tabs.query({ url: REWE_ORIGINS });
+    const tab = tabs.find((candidate) => candidate.url?.startsWith("https://www.rewe.de/shop"));
+    if (!tab) return;
+    if (nativePort || manualConnectPromise || generation !== manualConnectGeneration) return;
+
+    const port = chrome.runtime.connectNative(HOST_NAME);
+    replaceNativePort(port, tab.id);
+    await setBadge("OK", "#137333");
+    await chrome.action.setTitle({ title: "grocery-mcp: connected" });
+  } catch {
+    await setErrorBadge("native_host_error");
+  } finally {
+    reconnecting = false;
+  }
+}
+
 async function connect() {
+  if (manualConnectPromise) return manualConnectPromise;
+  manualConnectGeneration++;
+  manualConnectPromise = connectManually();
+  try {
+    return await manualConnectPromise;
+  } finally {
+    manualConnectPromise = null;
+  }
+}
+
+async function connectManually() {
   const granted = await chrome.permissions.request({ origins: REWE_ORIGINS });
   if (!granted) throw new Error("permission_denied");
 
   const tab = await authenticatedShopTab();
-
-  if (nativePort) nativePort.disconnect();
 
   let port;
   try {
@@ -179,8 +243,15 @@ async function connect() {
   } catch {
     throw new Error("native_host_error");
   }
-  bindPort(port, tab.id);
+  replaceNativePort(port, tab.id);
+  armReconnectWatchdog();
 }
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RECONNECT_ALARM) reconnectNativeHost();
+});
+
+chrome.runtime.onStartup.addListener(scheduleReconnect);
 
 chrome.action.onClicked.addListener(async () => {
   try {
